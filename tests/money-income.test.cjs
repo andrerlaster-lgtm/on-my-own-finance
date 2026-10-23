@@ -45,3 +45,8 @@ test("summaries count every cent once; tips are separate; net is receipts minus 
   assert.equal(m.receipts, 36500); assert.equal(m.byTaxForm["1099nec"].receipts, 20000);
   assert.equal(Object.values(m.byTaxForm).reduce((s, x) => s + x.receipts, 0), m.receipts, "form buckets add up to the total");
 });
+test("visits are optional: empty means not entered, and bad values are rejected", () => {
+  assert.equal(I.parseVisits(""), 0); assert.equal(I.parseVisits(undefined), 0); assert.equal(I.parseVisits("3"), 3);
+  for (const bad of ["-1", "1.5", "1001", "abc"]) assert.equal(I.parseVisits(bad), null, bad);
+  assert.equal(I.parseIncomeForm({ occurred_on: "2026-10-01", source: "cash", gross: "10" }).value.visits, 0, "a new entry has no visits unless entered");
+});

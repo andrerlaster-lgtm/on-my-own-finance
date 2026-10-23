@@ -35,9 +35,9 @@ export const PAYMENT_EVENT_WORDS = /payment|sale|charge/i;
 /*
  * How the money columns become our fields (all in cents):
  *   tip      = Tip
- *   revenue  = Total Collected - Tip - Tax          (Tax must be 0; the business charges no sales tax)
+ *   revenue  = Total Collected - Tip               (a row with any Tax is NOT imported: the business charges no sales tax, so it is flagged for review)
  *   fee      = |Fees|                                 (Square may write fees as negative numbers)
  *   check    = Net Total must equal Total Collected - fee, otherwise the row is "uncertain" and not counted
- * Revenue + tip = Total Collected, so nothing is counted twice.
+ * Revenue + tip = Total Collected for every imported row, so nothing is counted twice and tax can never leak into revenue.
  */
 export const LIMITS = { fileBytes: 2_000_000, records: 20_000, importableRows: 5_000 };

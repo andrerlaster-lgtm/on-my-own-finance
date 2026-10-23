@@ -117,7 +117,7 @@ export function parseSquareCsv(text: string): ParseOutcome {
       if (total === null || tip === null || tax === null || fees === null || net === null) { flag("uncertain", "an amount is not readable"); continue; }
       if (tax !== 0) { flag("uncertain", "has sales tax (none expected)"); continue; }
       if (tip < 0) { flag("uncertain", "negative tip"); continue; }
-      const fee = Math.abs(fees), gross = total - tip - tax;
+      const fee = Math.abs(fees), gross = total - tip; // tax is 0 here (rows with sales tax were flagged above), so revenue + tip = Total Collected exactly
       if (gross < 0) { flag("uncertain", "tip is larger than the total"); continue; }
       if (gross + tip === 0) { flag("uncertain", "nothing was collected"); continue; }
       if (fee > gross + tip) { flag("uncertain", "fee is larger than the payment"); continue; }

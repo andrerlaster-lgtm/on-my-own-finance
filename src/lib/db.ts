@@ -104,6 +104,12 @@ export async function addIncome(v: IncomeInput): Promise<void> {
   await audit("add_income", { occurred_on: v.occurred_on, source: v.source });
 }
 
+/** Visits can be set or corrected on any entry, including imported ones. */
+export async function setVisits(id: number, visits: number): Promise<void> {
+  const rows = await sql()`UPDATE income_entries SET visits = ${visits} WHERE id = ${id} RETURNING id`;
+  if (rows.length) await audit("set_visits", { id, visits });
+}
+
 /** Only hand-entered rows can be deleted; imported rows are removed by re-importing, never here. */
 export async function deleteManualIncome(id: number): Promise<boolean> {
   const rows = await sql()`DELETE FROM income_entries WHERE id = ${id} AND external_id IS NULL RETURNING id`;
@@ -127,7 +133,7 @@ export async function existingSquareIds(ids: string[]): Promise<Set<string>> {
 }
 
 /** Saves the new rows and one batch record in a single statement. Rows already present are skipped by the database itself (unique key), so a repeat or overlapping import adds nothing twice. */
-export async function importSquareRows(rows: ImportRow[], counts: Counts): Promise<{ added: number; duplicates: number }> {
+export async function importSquareRows(rows: ImportRow[], counts: Counts, visitsEach: 0 | 1): Promise<{ added: number; duplicates: number }> {
   const existing = await existingSquareIds(rows.map((r) => r.external_id));
   const fresh = rows.filter((r) => !existing.has(r.external_id));
   const dates = rows.map((r) => r.occurred_on).sort();
@@ -137,12 +143,12 @@ export async function importSquareRows(rows: ImportRow[], counts: Counts): Promi
        VALUES ('square', $1, $2, $3, $4, $5, $6::date, $7::date) RETURNING id),
      ins AS (
        INSERT INTO income_entries (occurred_on, source, tax_form, gross_cents, tip_cents, fee_cents, visits, external_id, import_batch_id)
-       SELECT u.d, 'square', 'unknown', u.g, u.t, u.f, 1, u.x, (SELECT id FROM b)
+       SELECT u.d, 'square', 'unknown', u.g, u.t, u.f, $13::int, u.x, (SELECT id FROM b)
        FROM unnest($8::text[], $9::date[], $10::bigint[], $11::bigint[], $12::bigint[]) AS u(x, d, g, t, f)
        ON CONFLICT (source, external_id) WHERE external_id IS NOT NULL DO NOTHING RETURNING id)
      SELECT (SELECT id FROM b) AS batch_id, (SELECT count(*) FROM ins) AS added`,
     [counts.read, fresh.length, counts.duplicateInFile + existing.size, counts.refund, counts.failed + counts.uncertain, dates[0] ?? null, dates[dates.length - 1] ?? null,
-     fresh.map((r) => r.external_id), fresh.map((r) => r.occurred_on), fresh.map((r) => r.gross_cents), fresh.map((r) => r.tip_cents), fresh.map((r) => r.fee_cents)],
+     fresh.map((r) => r.external_id), fresh.map((r) => r.occurred_on), fresh.map((r) => r.gross_cents), fresh.map((r) => r.tip_cents), fresh.map((r) => r.fee_cents), visitsEach],
   );
   const added = Number((res as { added: string }[])[0].added), batch = Number((res as { batch_id: string }[])[0].batch_id);
   const duplicates = counts.duplicateInFile + (rows.length - added);

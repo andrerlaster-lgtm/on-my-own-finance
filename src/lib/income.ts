@@ -45,13 +45,19 @@ export function parseIncomeForm(form: Record<string, string | undefined>): { ok:
   if (gross === null) errors.push("Revenue: enter dollars like 150 or 150.00.");
   if (tip === null) errors.push("Tips: enter dollars like 20 or 20.00, or leave empty.");
   if (fee === null) errors.push("Processing fee: enter dollars like 4.35, or leave empty.");
-  const vraw = (form.visits ?? "").trim();
-  const visits = vraw === "" ? 0 : /^\d{1,4}$/.test(vraw) ? Number(vraw) : null;
-  if (visits === null || visits > 1000) errors.push("Visits: a whole number from 0 to 1000.");
+  const visits = parseVisits(form.visits);
+  if (visits === null) errors.push("Visits: a whole number from 0 to 1000.");
   if (!errors.length && (gross as number) + (tip as number) === 0) errors.push("Enter revenue or tips greater than zero.");
   if (!errors.length && (fee as number) > (gross as number) + (tip as number)) errors.push("Processing fee can't be more than revenue plus tips.");
   if (errors.length) return { ok: false, errors };
   return { ok: true, value: { occurred_on: occurred_on!, source, tax_form, gross_cents: gross!, tip_cents: tip!, fee_cents: fee!, visits: visits! } };
+}
+
+/** Visits are optional: empty means 0 ("not entered"). */
+export function parseVisits(raw: string | undefined): number | null {
+  const s = (raw ?? "").trim();
+  if (s === "") return 0;
+  return /^\d{1,4}$/.test(s) && Number(s) <= 1000 ? Number(s) : null;
 }
 
 export interface Totals { visits: number; revenue: number; tips: number; receipts: number; fees: number; netAfterFees: number }

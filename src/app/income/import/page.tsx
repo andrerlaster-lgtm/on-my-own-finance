@@ -26,7 +26,7 @@ async function confirmAction(fd: FormData) {
   await requireOwner();
   const parsed = parsePayload(String(fd.get("payload") ?? ""));
   if (!parsed.ok) redirect(`/income/import?error=${encodeURIComponent(parsed.error)}`);
-  const r = await importSquareRows(parsed.rows, parsed.counts);
+  const r = await importSquareRows(parsed.rows, parsed.counts, fd.get("count_visits") === "on" ? 1 : 0);
   redirect(`/income/import?added=${r.added}&dupes=${r.duplicates}`);
 }
 

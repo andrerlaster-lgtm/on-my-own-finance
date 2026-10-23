@@ -117,3 +117,16 @@ test("quoted cells with commas, quotes and line breaks in ignored columns do not
   const r = ok(h + "\r\n" + cells + "\r\n" + line({ "Payment ID": "PAY7002" }) + ",plain\r\n");
   assert.equal(r.counts.read, 2); assert.deepEqual(r.rows.map((x) => x.external_id), ["PAY7001", "PAY7002"]);
 });
+
+test("sales tax: a row with tax is flagged and never counted, so revenue + tip always equals total collected", () => {
+  const taxed = { "Payment ID": "PAY8001", Tax: "$8.25", "Total Collected": "$123.25", "Net Total": "$119.75" }; // 100.00 + 15.00 tip + 8.25 tax - 3.50 fee
+  const r = ok(csv(taxed, { "Payment ID": "PAY8002" }, { "Payment ID": "PAY8003", "Total Collected": "$80.00", Tip: "$0.00", Fees: "-$2.62", "Net Total": "$77.38" }));
+  assert.equal(r.rows.length, 2); assert.equal(r.counts.uncertain, 1);
+  assert.deepEqual(r.flags, [{ row: 2, category: "uncertain", reason: "has sales tax (none expected)" }]);
+  assert.ok(!r.rows.some((x) => x.external_id === "PAY8001"), "the taxed row adds nothing, neither tax nor revenue");
+  const collected = 11500 + 8000;
+  const p = S.buildPreview(r, new Set());
+  assert.equal(p.revenue + p.tips, collected, "revenue + tips equals total collected over the imported rows");
+  assert.deepEqual([p.revenue, p.tips, p.fees, p.netAfterFees], [18000, 1500, 612, 18888]);
+  for (const x of r.rows) assert.ok(x.gross_cents >= 0 && x.fee_cents <= x.gross_cents + x.tip_cents);
+});

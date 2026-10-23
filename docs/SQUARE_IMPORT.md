@@ -10,7 +10,8 @@ Income → Import Square CSV → choose the Transactions export → **Preview** 
 - Counted as income: rows whose status is complete and whose amounts add up.
 - Flagged and **not** counted: refunds (refund event or status, a partial-refund amount, a refund reason, or a negative total), failed or declined payments, and unclear rows (unknown status or event, sales tax present, missing payment ID, unreadable date or amount, fee larger than the payment, or Net Total not equal to Total Collected minus fees). The preview lists these by row number and a fixed reason only.
 - A partly refunded sale is flagged as a refund and not counted; enter it by hand if it should count.
-- Amounts: tip = Tip; revenue = Total Collected − Tip − Tax; fee = |Fees|. Revenue + tip = Total Collected, so nothing is counted twice. Each imported payment is one visit.
+- Amounts: tip = Tip; revenue = Total Collected − Tip; fee = |Fees|. Revenue + tip = Total Collected, so nothing is counted twice. A row that shows any sales tax is **not imported** (it is flagged for review), because the business charges none and tax must never count as revenue.
+- **Visits are not assumed.** Imported payments get 0 visits unless you tick "Count each imported payment as 1 visit" on the confirm step. Visits can be set or corrected on any entry on the Income page.
 - Imported rows are saved with tax form "not decided" and source "Square"; which 1099 applies is the preparer's call.
 - **Duplicates:** each payment is keyed by (source, Payment ID), or `t:` + Transaction ID if there is no Payment ID. The database refuses a second copy, so re-importing the same file or an overlapping date range adds nothing. The preview shows how many were already imported.
 - Limits: 2 MB file, 5,000 payments per import. Export a shorter date range if needed.

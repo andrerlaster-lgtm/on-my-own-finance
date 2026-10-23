@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireOwner } from "@/lib/auth";
-import { databaseReady, listIncome, addIncome, deleteManualIncome } from "@/lib/db";
-import { MANUAL_SOURCES, SOURCE_LABELS, TAX_FORMS, parseIncomeForm } from "@/lib/income";
+import { databaseReady, listIncome, addIncome, deleteManualIncome, setVisits } from "@/lib/db";
+import { MANUAL_SOURCES, SOURCE_LABELS, TAX_FORMS, parseIncomeForm, parseVisits } from "@/lib/income";
 import { formatCents } from "@/lib/money";
 import { addDays, todayInChicago } from "@/lib/dates";
 import { Nav } from "@/components/Nav";
@@ -17,6 +17,16 @@ async function add(form: FormData) {
   const parsed = parseIncomeForm(raw);
   if (!parsed.ok) redirect(`/income?error=${encodeURIComponent(parsed.errors.join(" | "))}`);
   await addIncome(parsed.value);
+  redirect("/income?saved=1");
+}
+
+async function saveVisits(form: FormData) {
+  "use server";
+  await requireOwner();
+  const id = Number(form.get("id")), visits = parseVisits(String(form.get("visits") ?? ""));
+  if (!Number.isInteger(id) || id < 1) redirect("/income");
+  if (visits === null) redirect(`/income?error=${encodeURIComponent("Visits: a whole number from 0 to 1000, or leave empty.")}`);
+  await setVisits(id, visits);
   redirect("/income?saved=1");
 }
 
@@ -52,7 +62,7 @@ export default async function Income({ searchParams }: { searchParams: Promise<{
         <label htmlFor="g">Revenue, not including tips ($)</label><input id="g" name="gross" type="text" inputMode="decimal" placeholder="0.00" />
         <label htmlFor="tp">Tips ($)</label><input id="tp" name="tip" type="text" inputMode="decimal" placeholder="0.00" />
         <label htmlFor="f">Processing fee ($)</label><input id="f" name="fee" type="text" inputMode="decimal" placeholder="0.00" />
-        <label htmlFor="v">Visits</label><input id="v" name="visits" type="number" min={0} max={1000} defaultValue={1} />
+        <label htmlFor="v">Visits (optional)</label><input id="v" name="visits" type="number" min={0} max={1000} placeholder="not entered" />
         <p><button className="btn" type="submit">Add</button></p>
       </form>
       <div className="card tablewrap">
@@ -63,7 +73,7 @@ export default async function Income({ searchParams }: { searchParams: Promise<{
             <tbody>{rows.map((r) => (
               <tr key={r.id}>
                 <td>{r.occurred_on}</td><td>{SOURCE_LABELS[r.source] ?? r.source}</td><td>{TAX_FORMS.find((t) => t.id === r.tax_form)?.label.split(" (")[0]}</td>
-                <td className="num">{formatCents(r.gross_cents)}</td><td className="num">{formatCents(r.tip_cents)}</td><td className="num">{formatCents(r.fee_cents)}</td><td className="num">{r.visits}</td>
+                <td className="num">{formatCents(r.gross_cents)}</td><td className="num">{formatCents(r.tip_cents)}</td><td className="num">{formatCents(r.fee_cents)}</td><td className="num"><form action={saveVisits} className="inline"><input type="hidden" name="id" value={r.id} /><input name="visits" type="number" min={0} max={1000} defaultValue={r.visits || ""} placeholder="–" aria-label="Visits" style={{ width: 64 }} /> <button className="linkbtn" type="submit">Save</button></form></td>
                 <td>{r.imported ? <span className="muted">imported</span> : <form action={remove} className="inline"><input type="hidden" name="id" value={r.id} /><button className="linkbtn" type="submit">Delete</button></form>}</td>
               </tr>
             ))}</tbody>

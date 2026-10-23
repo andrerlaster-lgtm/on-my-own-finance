@@ -64,7 +64,7 @@ export default async function Home() {
               <div className="card" key={title}>
                 <h2>{title} <span className="muted">{range.from} to {range.to}</span></h2>
                 <div className="grid2">
-                  <div className="stat">Visits<b>{t.visits}</b></div>
+                  <div className="stat">Visits (as entered)<b>{t.visits}</b></div>
                   <div className="stat">Revenue (excludes tips and refunds)<b>{formatCents(t.revenue)}</b></div>
                   <div className="stat">Tips<b>{formatCents(t.tips)}</b></div>
                   <div className="stat">Total receipts (revenue + tips)<b>{formatCents(t.receipts)}</b></div>
