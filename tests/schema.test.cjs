@@ -3,7 +3,7 @@ const S = require("../.testbuild/schema.js");
 
 test("every statement is additive and re-runnable", () => {
   for (const s of S.schemaStatements) {
-    assert.match(s, /^\s*(CREATE TABLE IF NOT EXISTS|INSERT INTO app_meta)/);
+    assert.match(s, /^\s*(CREATE (UNIQUE )?(TABLE|INDEX) IF NOT EXISTS|INSERT INTO app_meta)/);
     assert.doesNotMatch(s, /\b(DROP|TRUNCATE|DELETE|ALTER)\b/i);
   }
   assert.match(S.schemaStatements.at(-1), /ON CONFLICT/);
