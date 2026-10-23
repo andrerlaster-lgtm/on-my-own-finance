@@ -86,3 +86,14 @@ test("year-end report: begin/end stock and value, and each kind of change valued
 test("schema v4 is additive and holds no names or places", () => {
   assert.equal(S.SCHEMA_VERSION, 4); for (const t of ["inventory_lot_uses", "inventory_settings"]) assert.ok(S.EXPORT_TABLES.includes(t), t);
 });
+
+test("every exported table can be ordered (each has the column the export sorts by)", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const sql = S.schemaStatements.join("\n"), src = fs.readFileSync(path.join(__dirname, "../src/lib/db.ts"), "utf8");
+  const order = (t) => (t === "app_meta" ? "key" : t === "tax_year_rules" ? "tax_year" : t === "inventory_settings" ? "item_id" : "id");
+  assert.match(src, /table === "inventory_settings" \? "item_id" : "id"/, "db.ts uses the same ordering rule");
+  for (const t of S.EXPORT_TABLES) {
+    const body = new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\(([\\s\\S]*?)\\n   \\)`).exec(sql)[1];
+    assert.match(body, new RegExp(`^\\s*${order(t)}\\s`, "m"), `${t} has a ${order(t)} column`);
+  }
+});
