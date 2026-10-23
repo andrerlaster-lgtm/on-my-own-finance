@@ -1,6 +1,8 @@
 import { neon } from "@neondatabase/serverless";
 import { EXPORT_TABLES, schemaStatements, SCHEMA_VERSION, type ExportTable } from "./schema";
 import { emptyRules, type TaxYearRules } from "./taxRules";
+import type { Expense, ExpenseInput } from "./expenses";
+import type { Trip, TripInput } from "./mileage";
 import type { Counts, ImportRow } from "./squareImport";
 import type { IncomeEntry, IncomeInput, TaxForm } from "./income";
 import type { ItemInput, Movement, MovementInput } from "./inventory";
@@ -86,7 +88,9 @@ export async function saveRules(r: TaxYearRules): Promise<void> {
 export async function exportTable(table: ExportTable): Promise<Record<string, unknown>[]> {
   if (!EXPORT_TABLES.includes(table)) throw new Error("unknown table");
   const order = table === "app_meta" ? "key" : table === "tax_year_rules" ? "tax_year" : "id";
-  return (await sql().query(`SELECT * FROM ${table} ORDER BY ${order}`)) as Record<string, unknown>[];
+  // receipt photos are listed (id, size, date) but their image bytes are not put in the JSON/CSV export; view them one by one in the app
+  const cols = table === "expense_receipts" ? "id, expense_id, content_type, bytes_len, created_at" : "*";
+  return (await sql().query(`SELECT ${cols} FROM ${table} ORDER BY ${order}`)) as Record<string, unknown>[];
 }
 
 // ---- Phase 1: income and inventory. Dates are read as text (to_char) and bigint sums as numbers so nothing shifts or overflows. ----
@@ -211,4 +215,81 @@ export async function addMovement(v: MovementInput): Promise<string | null> {
               VALUES (${v.item_id}, ${v.moved_on}::date, ${v.kind}, ${v.quantity}, ${v.unit_cost_cents}, ${v.reason}, ${v.lot_number}, ${v.expires_on}::date)`;
   await audit("add_movement", { item_id: v.item_id, kind: v.kind, quantity: v.quantity });
   return null;
+}
+
+// ---- Phase 2: expenses, receipt photos, mileage ----
+export async function listExpenses(from: string, to: string, limit = 500): Promise<Expense[]> {
+  const rows = await sql()`
+    SELECT e.id, to_char(e.spent_on, 'YYYY-MM-DD') AS spent_on, e.amount_cents, e.category, e.vendor, e.receipt_on_file,
+           (SELECT count(*) FROM expense_receipts r WHERE r.expense_id = e.id) AS photos
+    FROM expenses e WHERE e.spent_on BETWEEN ${from}::date AND ${to}::date ORDER BY e.spent_on DESC, e.id DESC LIMIT ${limit}`;
+  return rows.map((r) => ({ id: Number(r.id), spent_on: r.spent_on, amount_cents: Number(r.amount_cents), category: r.category, vendor: r.vendor ?? null,
+    receipt_on_file: r.receipt_on_file === true || r.receipt_on_file === "t" || r.receipt_on_file === "true", photos: Number(r.photos) }));
+}
+
+export async function addExpense(v: ExpenseInput): Promise<number> {
+  const r = await sql()`INSERT INTO expenses (spent_on, amount_cents, category, vendor, receipt_on_file)
+                        VALUES (${v.spent_on}::date, ${v.amount_cents}, ${v.category}, ${v.vendor}, ${v.receipt_on_file}) RETURNING id`;
+  await audit("add_expense", { id: Number(r[0].id), category: v.category, amount_cents: v.amount_cents });
+  return Number(r[0].id);
+}
+
+/** Deletes the expense and its photos together, in one statement. */
+export async function deleteExpense(id: number): Promise<boolean> {
+  const rows = await sql()`WITH p AS (DELETE FROM expense_receipts WHERE expense_id = ${id}) DELETE FROM expenses WHERE id = ${id} RETURNING id, amount_cents, category`;
+  if (rows.length) await audit("delete_expense", { id, category: rows[0].category, amount_cents: Number(rows[0].amount_cents) });
+  return rows.length > 0;
+}
+
+export async function countReceipts(expenseId: number): Promise<number> {
+  return Number((await sql()`SELECT count(*) AS n FROM expense_receipts WHERE expense_id = ${expenseId}`)[0].n);
+}
+
+export async function expenseExists(id: number): Promise<boolean> {
+  return (await sql()`SELECT 1 FROM expenses WHERE id = ${id}`).length > 0;
+}
+
+/** Image bytes travel as base64 text so the HTTP driver handles them the same way everywhere. */
+export async function addReceipt(expenseId: number, bytes: Uint8Array): Promise<void> {
+  await sql()`INSERT INTO expense_receipts (expense_id, bytes_len, data) VALUES (${expenseId}, ${bytes.length}, decode(${Buffer.from(bytes).toString("base64")}, 'base64'))`;
+  await audit("add_receipt", { expense_id: expenseId, bytes: bytes.length });
+}
+
+export async function receiptIds(expenseId: number): Promise<number[]> {
+  return (await sql()`SELECT id FROM expense_receipts WHERE expense_id = ${expenseId} ORDER BY id`).map((r) => Number(r.id));
+}
+
+export async function getReceiptBytes(id: number): Promise<Buffer | null> {
+  const r = (await sql()`SELECT encode(data, 'base64') AS b64 FROM expense_receipts WHERE id = ${id}`)[0];
+  return r ? Buffer.from(String(r.b64), "base64") : null;
+}
+
+export async function deleteReceipt(id: number): Promise<void> {
+  const rows = await sql()`DELETE FROM expense_receipts WHERE id = ${id} RETURNING expense_id`;
+  if (rows.length) await audit("delete_receipt", { id, expense_id: Number(rows[0].expense_id) });
+}
+
+export async function listTrips(from: string, to: string, limit = 500): Promise<Trip[]> {
+  const rows = await sql()`
+    SELECT id, to_char(driven_on, 'YYYY-MM-DD') AS driven_on, miles_tenths, purpose, odometer_start, odometer_end
+    FROM mileage_trips WHERE driven_on BETWEEN ${from}::date AND ${to}::date ORDER BY driven_on DESC, id DESC LIMIT ${limit}`;
+  return rows.map((r) => ({ id: Number(r.id), driven_on: r.driven_on, miles_tenths: Number(r.miles_tenths), purpose: r.purpose,
+    odometer_start: r.odometer_start === null ? null : Number(r.odometer_start), odometer_end: r.odometer_end === null ? null : Number(r.odometer_end) }));
+}
+
+export async function addTrip(v: TripInput): Promise<void> {
+  await sql()`INSERT INTO mileage_trips (driven_on, miles_tenths, purpose, odometer_start, odometer_end)
+              VALUES (${v.driven_on}::date, ${v.miles_tenths}, ${v.purpose}, ${v.odometer_start}, ${v.odometer_end})`;
+  await audit("add_trip", { driven_on: v.driven_on, miles_tenths: v.miles_tenths });
+}
+
+export async function deleteTrip(id: number): Promise<void> {
+  const rows = await sql()`DELETE FROM mileage_trips WHERE id = ${id} RETURNING id`;
+  if (rows.length) await audit("delete_trip", { id });
+}
+
+/** Inventory purchases in a period, shown beside expenses only as a reminder. They are not expenses. */
+export async function inventoryPurchasesTotal(from: string, to: string): Promise<number> {
+  const r = await sql()`SELECT COALESCE(SUM(quantity::bigint * unit_cost_cents), 0) AS t FROM inventory_movements WHERE kind = 'purchase' AND moved_on BETWEEN ${from}::date AND ${to}::date`;
+  return Number(r[0].t);
 }

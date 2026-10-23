@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { requireOwner } from "@/lib/auth";
-import { databaseConfigured, databaseReady, schemaVersion, runSetup, listIncome, lastImportRefunds, listItems } from "@/lib/db";
+import { databaseConfigured, databaseReady, schemaVersion, runSetup, listIncome, lastImportRefunds, listItems, listExpenses, listTrips, getRules } from "@/lib/db";
+import { estimateProfit, summarizeExpenses } from "@/lib/expenses";
+import { formatMiles, mileageSummary, type RateInfo } from "@/lib/mileage";
 import { summarize, TAX_FORMS } from "@/lib/income";
 import { isLowStock } from "@/lib/inventory";
 import { formatCents } from "@/lib/money";
@@ -31,13 +33,20 @@ export default async function Home() {
   const entries = dash ? await listIncome(periods.year.from < periods.week.from ? periods.year.from : periods.week.from, periods.year.to > periods.week.to ? periods.year.to : periods.week.to, 5000) : [];
   const refunds = dash ? await lastImportRefunds() : null;
   const low = dash ? (await listItems()).filter((i) => isLowStock(i.stock.onHand, i.reorder_level)) : [];
+  const full = dash && (version ?? 0) >= 3;
+  const wideFrom = periods.year.from < periods.week.from ? periods.year.from : periods.week.from;
+  const wideTo = periods.year.to > periods.week.to ? periods.year.to : periods.week.to;
+  const exps = full ? await listExpenses(wideFrom, wideTo, 5000) : [];
+  const trips = full ? await listTrips(wideFrom, wideTo, 5000) : [];
+  const rates: Record<number, RateInfo> = {};
+  if (full) for (const y of new Set([wideFrom, wideTo].map((d) => Number(d.slice(0, 4))))) { const r = await getRules(y); rates[y] = { centsPerMile: r.mileage_rate_cents, confirmed: r.mileage_rate_confirmed }; }
   const cols = [["This week", periods.week], ["This month", periods.month], ["This year", periods.year]] as const;
   return (
     <main>
       <Nav />
       <h1>On My Own Finance</h1>
       <p className="muted">Signed in as {owner.name}{owner.via === "dev-bypass" ? " (local test mode)" : ""}.</p>
-      <div className="note">Expenses are not tracked yet, so these are not profit figures. Tax numbers, tip treatment and sales-tax status are for your tax preparer to confirm.</div>
+      <div className="note">Profit figures are estimates only. Tax numbers, tip treatment and sales-tax status are for your tax preparer to confirm.</div>
       <div className="card">
         <h2>Database</h2>
         {!configured && <p className="err">DATABASE_URL is not set. See docs/SETUP.md.</p>}
@@ -71,6 +80,20 @@ export default async function Home() {
                   <div className="stat">Processing fees<b>{formatCents(t.fees)}</b></div>
                   <div className="stat">Net after processing fees, before expenses<b>{formatCents(t.netAfterFees)}</b></div>
                 </div>
+                {full && (() => {
+                  const ex = summarizeExpenses(exps, range), profit = estimateProfit(t.netAfterFees, ex), mi = mileageSummary(trips, range, rates);
+                  return (
+                    <>
+                      <div className="grid2" style={{ marginTop: 8 }}>
+                        <div className="stat">Expenses ({ex.count})<b>{formatCents(ex.total)}</b></div>
+                        <div className="stat">Estimated profit, before taxes and before the mileage deduction<b>{profit === null ? "no expenses entered" : formatCents(profit)}</b></div>
+                        <div className="stat">Miles ({mi.trips} trip{mi.trips === 1 ? "" : "s"})<b>{formatMiles(mi.miles_tenths)}</b></div>
+                        <div className="stat">Mileage deduction estimate<b>{mi.ratesMissing ? "rate not set" : formatCents(mi.deductionCents)}</b></div>
+                      </div>
+                      {(profit === null || mi.unconfirmed) && <p className="muted">{profit === null ? "Profit is only estimated once this period has at least one expense entry. " : ""}{mi.unconfirmed ? "The mileage rate is not confirmed with your preparer." : ""}</p>}
+                    </>
+                  );
+                })()}
                 <p className="muted">Receipts by tax form: {TAX_FORMS.map((f) => `${f.label.split(" (")[0]} ${formatCents(t.byTaxForm[f.id].receipts)}`).join(" · ")}</p>
               </div>
             );

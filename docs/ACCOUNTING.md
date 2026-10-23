@@ -21,5 +21,11 @@ Not tax advice. Your tax preparer decides how each item is treated.
 - Lot numbers and expiration dates are recorded on purchases and opening stock only. Per-lot tracking comes later.
 - Low-stock alert: on hand is at or below the item's reorder level. No level, no alert.
 
+## Expenses, mileage and receipts
+- **Expenses** use a fixed category list for your preparer to confirm. There is deliberately no category for Square processing fees: they are already on each imported payment, so adding them again would count them twice. Inventory purchases are not expenses unless you enter them on the Expenses page; the page shows the month's and year's inventory purchases beside your expenses as a reminder.
+- **Estimated profit** = net after processing fees − expenses. It appears only when the period has at least one expense entry; otherwise the dashboard says "no expenses entered". It is before taxes and does not include the mileage deduction.
+- **Mileage** is one row per trip (date, miles to a tenth, a fixed purpose, optional odometer readings). No addresses or places are stored. The deduction estimate is miles × the cents-per-mile rate for that trip's tax year, and shows "rate not set" or "not confirmed" until you set and confirm it. Do not also enter actual vehicle costs as expenses if your preparer uses the standard rate.
+- **Receipt photos** are JPEGs stored in the app's own database, up to 5 per expense. The browser shrinks each photo and removes location and camera data; the server refuses anything that still carries it. Do not photograph card numbers or patient information.
+
 ## Privacy
 No patient or customer names, contact details or health information are stored. Do not type them into any field.
