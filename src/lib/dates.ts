@@ -31,3 +31,6 @@ export function periodRanges(today: string): Periods {
     year: { from: `${y}-01-01`, to: `${y}-12-31` },
   };
 }
+
+/** Whole days from a to b (negative if b is earlier). */
+export const daysBetween = (a: string, b: string): number => Math.round((toUtc(b) - toUtc(a)) / 86_400_000);
