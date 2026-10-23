@@ -16,7 +16,9 @@
     "src/lib/money.ts",
     "src/lib/dates.ts",
     "src/lib/income.ts",
-    "src/lib/inventory.ts"
+    "src/lib/inventory.ts",
+    "src/lib/squareFormat.ts",
+    "src/lib/squareImport.ts"
   ],
   "exclude": [
     "node_modules"

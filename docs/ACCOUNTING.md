@@ -10,7 +10,7 @@ Not tax advice. Your tax preparer decides how each item is treated.
 - **Net after processing fees, before expenses** = total receipts − fees. It is **not profit**; expenses are not tracked yet.
 - **Source** (Square, check, cash, bank transfer, other) and **tax form** (1099-K, 1099-NEC, none, not decided) are two separate choices. Neither fills in the other. New entries default to "not decided".
 - **Visits** are entered per row (manual entries). Weeks run Monday to Sunday; "today" is Central time.
-- **Refunds:** Square refund rows are flagged when imported and left out of income. There is no refund screen. Because they are left out, revenue totals can be higher than Square's net; the dashboard says so when any were flagged.
+- **Refunds:** Square refund rows are flagged when imported and left out of income (see docs/SQUARE_IMPORT.md). There is no refund screen. Because they are left out, revenue totals can be higher than Square's net; the dashboard says so when any were flagged.
 
 ## Inventory (a separate ledger)
 - Buying stock is **not** recorded as an expense, and using stock is **not** a visit.

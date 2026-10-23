@@ -1,6 +1,7 @@
 import { neon } from "@neondatabase/serverless";
 import { EXPORT_TABLES, schemaStatements, SCHEMA_VERSION, type ExportTable } from "./schema";
 import { emptyRules, type TaxYearRules } from "./taxRules";
+import type { Counts, ImportRow } from "./squareImport";
 import type { IncomeEntry, IncomeInput, TaxForm } from "./income";
 import type { ItemInput, Movement, MovementInput } from "./inventory";
 import { replay, checkAdd, type Stock } from "./inventory";
@@ -110,9 +111,44 @@ export async function deleteManualIncome(id: number): Promise<boolean> {
   return rows.length > 0;
 }
 
-export async function refundRowsFlagged(): Promise<number> {
-  const rows = await sql()`SELECT COALESCE(SUM(rows_refund_flagged), 0) AS n FROM import_batches`;
-  return Number(rows[0]?.n ?? 0);
+/** The most recent Square import's refund-row count (a re-import of the same file must not add to it). */
+export async function lastImportRefunds(): Promise<{ n: number; first: string | null; last: string | null } | null> {
+  const r = (await sql()`SELECT rows_refund_flagged AS n, to_char(first_date,'YYYY-MM-DD') AS first, to_char(last_date,'YYYY-MM-DD') AS last FROM import_batches ORDER BY id DESC LIMIT 1`)[0];
+  return r ? { n: Number(r.n), first: r.first ?? null, last: r.last ?? null } : null;
+}
+
+export async function existingSquareIds(ids: string[]): Promise<Set<string>> {
+  const found = new Set<string>();
+  for (let i = 0; i < ids.length; i += 1000) {
+    const rows = await sql().query(`SELECT external_id FROM income_entries WHERE source = 'square' AND external_id = ANY($1::text[])`, [ids.slice(i, i + 1000)]);
+    for (const r of rows as { external_id: string }[]) found.add(r.external_id);
+  }
+  return found;
+}
+
+/** Saves the new rows and one batch record in a single statement. Rows already present are skipped by the database itself (unique key), so a repeat or overlapping import adds nothing twice. */
+export async function importSquareRows(rows: ImportRow[], counts: Counts): Promise<{ added: number; duplicates: number }> {
+  const existing = await existingSquareIds(rows.map((r) => r.external_id));
+  const fresh = rows.filter((r) => !existing.has(r.external_id));
+  const dates = rows.map((r) => r.occurred_on).sort();
+  const res = await sql().query(
+    `WITH b AS (
+       INSERT INTO import_batches (source, rows_read, rows_added, rows_duplicate, rows_refund_flagged, rows_skipped, first_date, last_date)
+       VALUES ('square', $1, $2, $3, $4, $5, $6::date, $7::date) RETURNING id),
+     ins AS (
+       INSERT INTO income_entries (occurred_on, source, tax_form, gross_cents, tip_cents, fee_cents, visits, external_id, import_batch_id)
+       SELECT u.d, 'square', 'unknown', u.g, u.t, u.f, 1, u.x, (SELECT id FROM b)
+       FROM unnest($8::text[], $9::date[], $10::bigint[], $11::bigint[], $12::bigint[]) AS u(x, d, g, t, f)
+       ON CONFLICT (source, external_id) WHERE external_id IS NOT NULL DO NOTHING RETURNING id)
+     SELECT (SELECT id FROM b) AS batch_id, (SELECT count(*) FROM ins) AS added`,
+    [counts.read, fresh.length, counts.duplicateInFile + existing.size, counts.refund, counts.failed + counts.uncertain, dates[0] ?? null, dates[dates.length - 1] ?? null,
+     fresh.map((r) => r.external_id), fresh.map((r) => r.occurred_on), fresh.map((r) => r.gross_cents), fresh.map((r) => r.tip_cents), fresh.map((r) => r.fee_cents)],
+  );
+  const added = Number((res as { added: string }[])[0].added), batch = Number((res as { batch_id: string }[])[0].batch_id);
+  const duplicates = counts.duplicateInFile + (rows.length - added);
+  if (added !== fresh.length) await sql()`UPDATE import_batches SET rows_added = ${added}, rows_duplicate = ${duplicates} WHERE id = ${batch}`;
+  await audit("import_square", { batch, added, duplicates, refund_rows_flagged: counts.refund, skipped: counts.failed + counts.uncertain });
+  return { added, duplicates };
 }
 
 export interface ItemRow { id: number; label: string; category: string; unit: string; reorder_level: number | null }

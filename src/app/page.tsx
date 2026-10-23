@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireOwner } from "@/lib/auth";
-import { databaseConfigured, databaseReady, schemaVersion, runSetup, listIncome, refundRowsFlagged, listItems } from "@/lib/db";
+import { databaseConfigured, databaseReady, schemaVersion, runSetup, listIncome, lastImportRefunds, listItems } from "@/lib/db";
 import { summarize, TAX_FORMS } from "@/lib/income";
 import { isLowStock } from "@/lib/inventory";
 import { formatCents } from "@/lib/money";
@@ -29,7 +29,7 @@ export default async function Home() {
   const periods = periodRanges(today);
   const dash = ready && (version ?? 0) >= 2;
   const entries = dash ? await listIncome(periods.year.from < periods.week.from ? periods.year.from : periods.week.from, periods.year.to > periods.week.to ? periods.year.to : periods.week.to, 5000) : [];
-  const refunds = dash ? await refundRowsFlagged() : 0;
+  const refunds = dash ? await lastImportRefunds() : null;
   const low = dash ? (await listItems()).filter((i) => isLowStock(i.stock.onHand, i.reorder_level)) : [];
   const cols = [["This week", periods.week], ["This month", periods.month], ["This year", periods.year]] as const;
   return (
@@ -75,7 +75,7 @@ export default async function Home() {
               </div>
             );
           })}
-          {refunds > 0 && <div className="note">{refunds} refund row{refunds === 1 ? "" : "s"} flagged in Square imports and left out. Revenue totals exclude refunds, so they may be higher than Square&rsquo;s net.</div>}
+          {refunds && refunds.n > 0 && <div className="note">The last Square import ({refunds.first} to {refunds.last}) flagged {refunds.n} refund row{refunds.n === 1 ? "" : "s"} and left {refunds.n === 1 ? "it" : "them"} out. Revenue totals exclude refunds, so they may be higher than Square&rsquo;s net.</div>}
         </>
       )}
       {ready && (
