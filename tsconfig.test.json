@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "rootDir": "src/lib",
+    "outDir": ".testbuild"
+  },
+  "include": ["src/lib/csv.ts", "src/lib/schema.ts", "src/lib/taxRules.ts"],
+  "exclude": ["node_modules"]
+}
