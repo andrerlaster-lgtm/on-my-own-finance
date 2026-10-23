@@ -52,9 +52,9 @@ test("receipt photos: plain JPEG only, metadata and junk refused", () => {
   assert.equal(R.inspectJpeg(new Uint8Array(R.MAX_RECEIPT_BYTES + 1)).ok, false, "too big");
   assert.equal(R.inspectJpeg(new Uint8Array(0)).ok, false);
 });
-test("schema v3: additive, no place or person columns, receipts capped and JPEG only", () => {
+test("schema v3 tables: additive, no place or person columns, receipts capped and JPEG only", () => {
   const sql = S.schemaStatements.join("\n");
-  assert.equal(S.SCHEMA_VERSION, 3);
+  assert.ok(S.SCHEMA_VERSION >= 3);
   for (const t of ["expenses", "expense_receipts", "mileage_trips"]) assert.ok(S.EXPORT_TABLES.includes(t), t);
   assert.doesNotMatch(sql, /\b(from_place|to_place|destination|address|location|latitude|longitude|gps)\b/i);
   assert.match(sql, /content_type = 'image\/jpeg'/); assert.match(sql, /octet_length\(data\) BETWEEN 1 AND 1500000/);

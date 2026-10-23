@@ -21,7 +21,8 @@
     "src/lib/squareImport.ts",
     "src/lib/expenses.ts",
     "src/lib/mileage.ts",
-    "src/lib/receipts.ts"
+    "src/lib/receipts.ts",
+    "src/lib/lots.ts"
   ],
   "exclude": [
     "node_modules"

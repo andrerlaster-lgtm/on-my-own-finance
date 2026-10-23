@@ -43,10 +43,15 @@ export type Replay = ({ ok: true } & Stock) | { ok: false; error: string };
 
 const byOrder = (a: Movement, b: Movement) => (a.moved_on < b.moved_on ? -1 : a.moved_on > b.moved_on ? 1 : a.id - b.id);
 
-export function replay(movements: readonly Movement[]): Replay {
+export interface Step { m: Movement; onHand: number; valueCents: number; valueDelta: number }
+export type StepsResult = { ok: true; steps: Step[] } | { ok: false; error: string };
+
+/** The full replay, one step per movement (stock and value after it, and how much value it added or removed). */
+export function replaySteps(movements: readonly Movement[]): StepsResult {
   let onHand = 0, value = 0;
+  const steps: Step[] = [];
   for (const m of [...movements].sort(byOrder)) {
-    const q = m.quantity;
+    const q = m.quantity, before = value;
     if (m.kind === "opening" || m.kind === "purchase") {
       onHand += q; value += q * (m.unit_cost_cents ?? 0);
     } else if (m.kind === "adjust_up") {
@@ -55,7 +60,16 @@ export function replay(movements: readonly Movement[]): Replay {
       if (q > onHand) return { ok: false, error: `Not enough on hand on ${m.moved_on}: only ${onHand} (tried to take ${q}).` };
       value -= q === onHand ? value : Math.round((value * q) / onHand); onHand -= q;
     }
+    steps.push({ m, onHand, valueCents: value, valueDelta: value - before });
   }
+  return { ok: true, steps };
+}
+
+export function replay(movements: readonly Movement[]): Replay {
+  const r = replaySteps(movements);
+  if (!r.ok) return r;
+  const last = r.steps[r.steps.length - 1];
+  const onHand = last?.onHand ?? 0, value = last?.valueCents ?? 0;
   return { ok: true, onHand, valueCents: value, avgCostCents: onHand > 0 ? Math.round(value / onHand) : 0 };
 }
 

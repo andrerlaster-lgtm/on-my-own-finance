@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireOwner } from "@/lib/auth";
-import { databaseConfigured, databaseReady, schemaVersion, runSetup, listIncome, lastImportRefunds, listItems, listExpenses, listTrips, getRules } from "@/lib/db";
+import { databaseConfigured, databaseReady, schemaVersion, runSetup, listIncome, lastImportRefunds, listItems, listExpenses, listTrips, getRules, listMovements, listLotUses, warnDaysByItem } from "@/lib/db";
+import { expiryAlerts } from "@/lib/lots";
 import { estimateProfit, summarizeExpenses } from "@/lib/expenses";
 import { formatMiles, mileageSummary, type RateInfo } from "@/lib/mileage";
 import { summarize, TAX_FORMS } from "@/lib/income";
@@ -32,7 +33,9 @@ export default async function Home() {
   const dash = ready && (version ?? 0) >= 2;
   const entries = dash ? await listIncome(periods.year.from < periods.week.from ? periods.year.from : periods.week.from, periods.year.to > periods.week.to ? periods.year.to : periods.week.to, 5000) : [];
   const refunds = dash ? await lastImportRefunds() : null;
-  const low = dash ? (await listItems()).filter((i) => isLowStock(i.stock.onHand, i.reorder_level)) : [];
+  const allItems = dash ? await listItems() : [];
+  const low = allItems.filter((i) => isLowStock(i.stock.onHand, i.reorder_level));
+  const expiring = (version ?? 0) >= 4 ? expiryAlerts(allItems, await listMovements(), await listLotUses(), await warnDaysByItem(), today) : [];
   const full = dash && (version ?? 0) >= 3;
   const wideFrom = periods.year.from < periods.week.from ? periods.year.from : periods.week.from;
   const wideTo = periods.year.to > periods.week.to ? periods.year.to : periods.week.to;
@@ -67,6 +70,7 @@ export default async function Home() {
       {dash && (
         <>
           {low.length > 0 && <div className="card"><h2>Low stock</h2><ul className="plain">{low.map((i) => <li key={i.id}><Link href={`/inventory/${i.id}`}>{i.label}</Link>: {i.stock.onHand} {i.unit} left</li>)}</ul></div>}
+          {expiring.length > 0 && <div className="card"><h2>Expiring supplies</h2><ul className="plain">{expiring.map((a) => <li key={`${a.item_id}${a.lot_number}`}><Link href={`/inventory/${a.item_id}`}>{a.label}</Link> lot {a.lot_number}: {a.onHand} {a.unit}, {a.status === "expired" ? "expired" : `expires in ${a.daysLeft} day${a.daysLeft === 1 ? "" : "s"}`}</li>)}</ul></div>}
           {cols.map(([title, range]) => {
             const t = summarize(entries, range);
             return (

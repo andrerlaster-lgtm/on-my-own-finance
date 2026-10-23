@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireOwner } from "@/lib/auth";
-import { databaseReady, listItems, addItem } from "@/lib/db";
+import { databaseReady, listItems, addItem, listMovements, listLotUses, warnDaysByItem } from "@/lib/db";
+import { expiryAlerts } from "@/lib/lots";
+import { todayInChicago } from "@/lib/dates";
 import { isLowStock, parseItemForm } from "@/lib/inventory";
 import { formatCents } from "@/lib/money";
 import { Nav } from "@/components/Nav";
@@ -26,6 +28,7 @@ export default async function Inventory({ searchParams }: { searchParams: Promis
   const sp = await searchParams;
   const items = await listItems();
   const total = items.reduce((s, i) => s + i.stock.valueCents, 0);
+  const alerts = expiryAlerts(items, await listMovements(), await listLotUses(), await warnDaysByItem(), todayInChicago());
   const low = items.filter((i) => isLowStock(i.stock.onHand, i.reorder_level));
   return (
     <main>
@@ -33,6 +36,8 @@ export default async function Inventory({ searchParams }: { searchParams: Promis
       <h1>Inventory</h1>
       <div className="note">Inventory is tracked on its own. A purchase here is not counted as an expense yet, and using supplies is not counted as a visit. Do not put patient information in any field.</div>
       {sp.error && <div className="card err">{sp.error.split(" | ").map((e) => <div key={e}>{e}</div>)}</div>}
+      <p className="row"><Link className="btn secondary" href="/inventory/lots">Lot lookup</Link><Link className="btn secondary" href="/inventory/report">Year-end report</Link></p>
+      {alerts.length > 0 && <div className="card"><h2>Expiry</h2><ul className="plain">{alerts.map((a) => <li key={`${a.item_id}${a.lot_number}`}><Link href={`/inventory/${a.item_id}`}>{a.label}</Link> lot {a.lot_number}: {a.onHand} {a.unit}, {a.status === "expired" ? `expired ${-a.daysLeft} day${a.daysLeft === -1 ? "" : "s"} ago` : `expires in ${a.daysLeft} day${a.daysLeft === 1 ? "" : "s"}`}</li>)}</ul></div>}
       {low.length > 0 && <div className="card"><h2>Low stock</h2><ul className="plain">{low.map((i) => <li key={i.id}><Link href={`/inventory/${i.id}`}>{i.label}</Link>: {i.stock.onHand} {i.unit} (reorder at {i.reorder_level})</li>)}</ul></div>}
       <div className="card tablewrap">
         <h2>Items</h2>

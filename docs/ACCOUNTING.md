@@ -18,7 +18,12 @@ Not tax advice. Your tax preparer decides how each item is treated.
 - On hand is calculated from the history, never typed in. History is append-only; fix mistakes with an adjustment (reasons come from a fixed list, no free text).
 - **Cost = weighted average.** Purchases and opening stock add `quantity × unit cost` to the running value. Using or removing stock takes out `value × quantity ÷ on hand` (all remaining value when the last unit goes). Adjusting up adds at the current average (zero if nothing was on hand).
 - A movement that would make stock go negative on any date is refused.
-- Lot numbers and expiration dates are recorded on purchases and opening stock only. Per-lot tracking comes later.
+- **Lots:** a lot is an item plus a lot number, created by purchases or opening stock that carry one. A lot number can have only one expiry date. Lot on hand = received − used, where each use or removal can be assigned to one or more lots. Uses default to the earliest-expiring lot first (you can enter amounts instead). Lots only say which units were used; cost still uses the weighted average for the whole item.
+- **Past uses** that were never assigned to a lot are flagged; one button assigns them earliest-expiring first (it only adds rows).
+- **Expiry alerts:** 30 days ahead by default, or a per-item number of days. Expired lots with stock stay flagged until written off.
+- **Write-off:** removes the expired units at the average cost with the reason "expired". It is not recorded as an expense; the value appears in the year-end report for your preparer.
+- **Lot lookup** shows when a lot arrived, its expiry, and when and how much was used. Uses are not linked to visits or people, so a lot cannot be traced to a patient.
+- **Year-end report** (page and CSV): stock and value on Jan 1 and Dec 31, and purchases, uses, expired write-offs and adjustments in between, each valued at the average cost at the time.
 - Low-stock alert: on hand is at or below the item's reorder level. No level, no alert.
 
 ## Expenses, mileage and receipts

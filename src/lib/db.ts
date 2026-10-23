@@ -7,6 +7,7 @@ import type { Counts, ImportRow } from "./squareImport";
 import type { IncomeEntry, IncomeInput, TaxForm } from "./income";
 import type { ItemInput, Movement, MovementInput } from "./inventory";
 import { replay, checkAdd, type Stock } from "./inventory";
+import { checkLotConsistency, lotBalances, suggestAllocation, validateAllocation, type LotUse } from "./lots";
 
 /** Neon over HTTP: one statement per query, no connection to keep open. Only used after requireOwner(). */
 export const databaseConfigured = (): boolean => Boolean(process.env.DATABASE_URL);
@@ -87,7 +88,7 @@ export async function saveRules(r: TaxYearRules): Promise<void> {
 /** Every row of every table, for the JSON/CSV export. Table names come from a fixed list, never from the request. */
 export async function exportTable(table: ExportTable): Promise<Record<string, unknown>[]> {
   if (!EXPORT_TABLES.includes(table)) throw new Error("unknown table");
-  const order = table === "app_meta" ? "key" : table === "tax_year_rules" ? "tax_year" : "id";
+  const order = table === "app_meta" ? "key" : table === "tax_year_rules" ? "tax_year" : table === "inventory_settings" ? "item_id" : "id";
   // receipt photos are listed (id, size, date) but their image bytes are not put in the JSON/CSV export; view them one by one in the app
   const cols = table === "expense_receipts" ? "id, expense_id, content_type, bytes_len, created_at" : "*";
   return (await sql().query(`SELECT ${cols} FROM ${table} ORDER BY ${order}`)) as Record<string, unknown>[];
@@ -206,15 +207,60 @@ export async function setReorderLevel(id: number, level: number | null): Promise
   await audit("set_reorder_level", { id, level });
 }
 
-/** Appends one movement after replaying the whole history with it included. Returns an error message instead of saving if stock would go negative. */
-export async function addMovement(v: MovementInput): Promise<string | null> {
+/**
+ * Appends one movement after replaying the whole history with it included (stock can never go negative). For a use or removal of an item that
+ * has lots, `allocations` says which lots it came from: "auto" = earliest-expiring first, or an explicit list that is checked against each lot.
+ * The movement and its lot rows are saved in one statement. Returns an error message instead of saving when anything does not add up.
+ */
+export async function addMovement(v: MovementInput, allocations: "auto" | { lot_number: string; quantity: number }[] = []): Promise<string | null> {
   if (!(await getItem(v.item_id))) return "Item not found.";
-  const err = checkAdd(await listMovements(v.item_id), v);
+  const moves = await listMovements(v.item_id);
+  const err = checkAdd(moves, v) ?? checkLotConsistency(moves, v);
   if (err) return err;
-  await sql()`INSERT INTO inventory_movements (item_id, moved_on, kind, quantity, unit_cost_cents, reason, lot_number, expires_on)
-              VALUES (${v.item_id}, ${v.moved_on}::date, ${v.kind}, ${v.quantity}, ${v.unit_cost_cents}, ${v.reason}, ${v.lot_number}, ${v.expires_on}::date)`;
-  await audit("add_movement", { item_id: v.item_id, kind: v.kind, quantity: v.quantity });
+  let allocs: { lot_number: string; quantity: number }[] = [];
+  if (v.kind === "use" || v.kind === "adjust_down") {
+    const lots = lotBalances(moves, await listLotUses(v.item_id));
+    if (allocations === "auto") allocs = lots.length ? suggestAllocation(lots, v.quantity).allocations : [];
+    else if (allocations.length) { const e = validateAllocation(lots, allocations, v.quantity, v.moved_on); if (e) return e; allocs = allocations; }
+  }
+  await sql().query(
+    `WITH m AS (
+       INSERT INTO inventory_movements (item_id, moved_on, kind, quantity, unit_cost_cents, reason, lot_number, expires_on)
+       VALUES ($1, $2::date, $3, $4, $5, $6, $7, $8::date) RETURNING id),
+     u AS (
+       INSERT INTO inventory_lot_uses (movement_id, lot_number, quantity)
+       SELECT (SELECT id FROM m), x.l, x.q FROM unnest($9::text[], $10::int[]) AS x(l, q) RETURNING id)
+     SELECT (SELECT id FROM m) AS id, (SELECT count(*) FROM u) AS lots`,
+    [v.item_id, v.moved_on, v.kind, v.quantity, v.unit_cost_cents, v.reason, v.lot_number, v.expires_on, allocs.map((a) => a.lot_number), allocs.map((a) => a.quantity)],
+  );
+  await audit("add_movement", { item_id: v.item_id, kind: v.kind, quantity: v.quantity, lots: allocs.length });
   return null;
+}
+
+export async function listLotUses(itemId?: number): Promise<LotUse[]> {
+  const rows = itemId === undefined
+    ? await sql().query(`SELECT movement_id, lot_number, quantity FROM inventory_lot_uses ORDER BY id`)
+    : await sql().query(`SELECT u.movement_id, u.lot_number, u.quantity FROM inventory_lot_uses u JOIN inventory_movements m ON m.id = u.movement_id WHERE m.item_id = $1 ORDER BY u.id`, [itemId]);
+  return (rows as Record<string, unknown>[]).map((r) => ({ movement_id: Number(r.movement_id), lot_number: r.lot_number as string, quantity: Number(r.quantity) }));
+}
+
+export async function insertLotUses(rows: LotUse[]): Promise<void> {
+  if (!rows.length) return;
+  await sql().query(`INSERT INTO inventory_lot_uses (movement_id, lot_number, quantity) SELECT x.m, x.l, x.q FROM unnest($1::bigint[], $2::text[], $3::int[]) AS x(m, l, q)`,
+    [rows.map((r) => r.movement_id), rows.map((r) => r.lot_number), rows.map((r) => r.quantity)]);
+  await audit("assign_past_uses", { rows: rows.length });
+}
+
+export async function warnDaysByItem(): Promise<Map<number, number>> {
+  const rows = await sql()`SELECT item_id, expiry_warn_days FROM inventory_settings`;
+  return new Map(rows.map((r) => [Number(r.item_id), Number(r.expiry_warn_days)]));
+}
+
+/** null removes the per-item setting (back to the 30-day default). */
+export async function setWarnDays(itemId: number, days: number | null): Promise<void> {
+  if (days === null) await sql()`DELETE FROM inventory_settings WHERE item_id = ${itemId}`;
+  else await sql()`INSERT INTO inventory_settings (item_id, expiry_warn_days) VALUES (${itemId}, ${days}) ON CONFLICT (item_id) DO UPDATE SET expiry_warn_days = EXCLUDED.expiry_warn_days, updated_at = now()`;
+  await audit("set_expiry_warning", { item_id: itemId, days });
 }
 
 // ---- Phase 2: expenses, receipt photos, mileage ----
