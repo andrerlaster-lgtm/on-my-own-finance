@@ -11,6 +11,7 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  experimental: { serverActions: { bodySizeLimit: "3mb" } }, // a Square CSV (2 MB limit) is uploaded through a form action
   async headers() {
     return [
       { source: "/:path*", headers: securityHeaders },

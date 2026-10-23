@@ -9,6 +9,18 @@
     "rootDir": "src/lib",
     "outDir": ".testbuild"
   },
-  "include": ["src/lib/csv.ts", "src/lib/schema.ts", "src/lib/taxRules.ts"],
-  "exclude": ["node_modules"]
+  "include": [
+    "src/lib/csv.ts",
+    "src/lib/schema.ts",
+    "src/lib/taxRules.ts",
+    "src/lib/money.ts",
+    "src/lib/dates.ts",
+    "src/lib/income.ts",
+    "src/lib/inventory.ts",
+    "src/lib/squareFormat.ts",
+    "src/lib/squareImport.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
 }

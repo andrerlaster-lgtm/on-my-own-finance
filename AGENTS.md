@@ -19,3 +19,6 @@ This version has breaking changes — APIs, conventions, and file structure may 
 This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
 
 <!-- END:nextjs-agent-rules -->
+
+- Do not guess the Square CSV format: wait for the owner's real header row. The parser must read only an allowlist of columns, flag refund rows (not import them), and dedupe on (source, payment ID).
+- Inventory never creates expenses or visits. Tips are never inside revenue.
