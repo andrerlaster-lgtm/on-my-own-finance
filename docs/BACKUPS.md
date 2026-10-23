@@ -4,6 +4,9 @@
 - **Neon point-in-time restore.** Neon keeps continuous history, not daily snapshots. You can restore the database to any moment inside the restore window. Free plan: 6 hours (too short). Launch plan: configurable up to 7 days (this app's setting). Longer windows need a higher plan.
 - **Your own export.** The home page downloads all data as JSON (and tax rules as CSV). Save a copy somewhere private (not in the repo) at least monthly and before year-end. Exports contain business data only, no patient information.
 
+## Receipt photos
+Receipt photos are stored in the database, so Neon's point-in-time restore covers them. The JSON/CSV export lists them (id, size, date) but does **not** include the image bytes; open each photo from the Expenses page to save a copy. Each photo is at most 1.5 MB (usually well under 1 MB), so storage grows slowly but is not free; check Neon's storage usage once real receipts are added.
+
 ## Restore drill (do once before real data, then yearly)
 1. In the Neon console, open Backup & Restore (Restore) and create a branch from a point a few minutes ago.
 2. Confirm the branch contains the `tax_year_rules` rows you expect.
