@@ -1,9 +1,9 @@
 /*
- * Database schema (version 2). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS and
+ * Database schema (version 3). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS and
  * ON CONFLICT only. Nothing here drops or rewrites data. Privacy rule: no column may hold a client or patient's name,
  * contact details, birth date or health information (tests/schema.test.cjs checks the column names).
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const schemaStatements: string[] = [
   `CREATE TABLE IF NOT EXISTS app_meta (
@@ -89,10 +89,43 @@ export const schemaStatements: string[] = [
      CHECK ((lot_number IS NULL AND expires_on IS NULL) OR kind IN ('opening', 'purchase'))
    )`,
   `CREATE INDEX IF NOT EXISTS inventory_movements_item_idx ON inventory_movements (item_id, moved_on)`,
+  // ---- version 3: expenses, receipt photos, mileage. No addresses or destinations anywhere (a stop could be a patient's home). ----
+  `CREATE TABLE IF NOT EXISTS expenses (
+     id              bigserial PRIMARY KEY,
+     spent_on        date NOT NULL,
+     amount_cents    bigint NOT NULL CHECK (amount_cents > 0 AND amount_cents <= 99999999999),
+     category        text NOT NULL CHECK (category IN ('supplies', 'insurance', 'licenses_fees', 'equipment', 'software', 'advertising', 'professional_services', 'phone_internet', 'training', 'other')),
+     vendor          text CHECK (vendor IS NULL OR char_length(vendor) BETWEEN 1 AND 60),
+     receipt_on_file boolean NOT NULL DEFAULT false,
+     created_at      timestamptz NOT NULL DEFAULT now()
+   )`,
+  `CREATE INDEX IF NOT EXISTS expenses_date_idx ON expenses (spent_on)`,
+  // Receipt photos live in this database so they share its access rules and backups. JPEG only, metadata stripped, at most 1.5 MB each.
+  `CREATE TABLE IF NOT EXISTS expense_receipts (
+     id          bigserial PRIMARY KEY,
+     expense_id  bigint NOT NULL REFERENCES expenses(id),
+     content_type text NOT NULL DEFAULT 'image/jpeg' CHECK (content_type = 'image/jpeg'),
+     bytes_len   integer NOT NULL CHECK (bytes_len BETWEEN 1 AND 1500000),
+     data        bytea NOT NULL CHECK (octet_length(data) BETWEEN 1 AND 1500000),
+     created_at  timestamptz NOT NULL DEFAULT now()
+   )`,
+  `CREATE INDEX IF NOT EXISTS expense_receipts_expense_idx ON expense_receipts (expense_id)`,
+  `CREATE TABLE IF NOT EXISTS mileage_trips (
+     id             bigserial PRIMARY KEY,
+     driven_on      date NOT NULL,
+     miles_tenths   integer NOT NULL CHECK (miles_tenths BETWEEN 1 AND 10000),
+     purpose        text NOT NULL CHECK (purpose IN ('patient_visits', 'supply_run', 'lab_dropoff', 'admin_errand', 'other')),
+     odometer_start integer CHECK (odometer_start IS NULL OR odometer_start BETWEEN 0 AND 9999999),
+     odometer_end   integer CHECK (odometer_end IS NULL OR odometer_end BETWEEN 0 AND 9999999),
+     created_at     timestamptz NOT NULL DEFAULT now(),
+     CHECK ((odometer_start IS NULL) = (odometer_end IS NULL)),
+     CHECK (odometer_start IS NULL OR odometer_end >= odometer_start)
+   )`,
+  `CREATE INDEX IF NOT EXISTS mileage_trips_date_idx ON mileage_trips (driven_on)`,
   `INSERT INTO app_meta (key, value) VALUES ('schema_version', '${SCHEMA_VERSION}')
    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now() WHERE app_meta.value::int < EXCLUDED.value::int`,
 ];
 
 /** Tables included in the full export, in order. */
-export const EXPORT_TABLES = ["app_meta", "tax_year_rules", "audit_log", "import_batches", "income_entries", "inventory_items", "inventory_movements"] as const;
+export const EXPORT_TABLES = ["app_meta", "tax_year_rules", "audit_log", "import_batches", "income_entries", "inventory_items", "inventory_movements", "expenses", "expense_receipts", "mileage_trips"] as const;
 export type ExportTable = (typeof EXPORT_TABLES)[number];
