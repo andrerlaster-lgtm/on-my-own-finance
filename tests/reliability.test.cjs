@@ -30,3 +30,14 @@ test("an expense and its first photo save in one statement; whole-year lists are
   assert.match(db, /Too many \$\{what\} rows/);
   for (const f of ["src/app/page.tsx", "src/app/expenses/page.tsx", "src/app/mileage/page.tsx"]) assert.doesNotMatch(rd(f), /listIncome\(|listExpenses\(|listTrips\(/, `${f} uses the capped lists`);
 });
+
+test("phone use: big tap targets, labelled file input, lists draw a limited number of rows, big downloads are refused cleanly", () => {
+  const css = rd("src/app/globals.css");
+  assert.match(css, /input\[type=number\], input\[type=text\], input\[type=date\], select \{ min-height:44px; \}/); assert.match(css, /\.linkbtn \{ min-height:44px/);
+  assert.match(rd("src/components/ImportForm.tsx"), /type="file"[^>]*aria-label=/);
+  const P = require("../.testbuild/paging.js");
+  assert.deepEqual([P.rowsToShow(undefined), P.rowsToShow("300"), P.rowsToShow("999999"), P.rowsToShow("abc"), P.rowsToShow("5")], [100, 300, 100, 100, 20]);
+  const ex = rd("src/app/api/export/route.ts"); assert.match(ex, /MAX_WEB_BYTES/); assert.match(ex, /status: 413/); assert.match(ex, /npm run backup/);
+  for (const f of ["src/app/expenses/page.tsx", "src/app/mileage/page.tsx", "src/app/income/page.tsx"]) assert.match(rd(f), /rowsToShow/, f);
+  assert.match(rd("src/app/expenses/page.tsx"), /receiptIdsFor/, "photo ids are fetched in one query, not one per row");
+});

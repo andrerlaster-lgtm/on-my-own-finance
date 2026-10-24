@@ -4,6 +4,8 @@ import { EXPORT_TABLES, SCHEMA_VERSION, type ExportTable } from "@/lib/schema";
 import { toCsv, type Cell } from "@/lib/csv";
 
 export const dynamic = "force-dynamic";
+const MAX_WEB_BYTES = 3_500_000; // Vercel rejects function responses over about 4.5 MB; stay well under
+const tooBig = () => new Response("This export is too large for a web download. Run `npm run backup` on your computer for a complete backup (see docs/BACKUPS.md), or export one table at a time.", { status: 413, headers: { "Cache-Control": "no-store" } });
 const headers = (type: string, name: string) => ({ "Content-Type": type, "Content-Disposition": `attachment; filename="${name}"`, "Cache-Control": "no-store" });
 
 /** GET /api/export            -> everything as one JSON file
@@ -20,13 +22,16 @@ export async function GET(req: Request) {
     const columns = rows.length ? Object.keys(rows[0]) : [];
     const flat = rows.map((r) => Object.fromEntries(columns.map((c) => [c, r[c] !== null && typeof r[c] === "object" && !(r[c] instanceof Date) ? JSON.stringify(r[c]) : (r[c] as Cell)])));
     const body = toCsv(columns, flat);
+    if (Buffer.byteLength(body) > MAX_WEB_BYTES) return tooBig();
     await audit("export_csv", { table });
     return new Response(body, { headers: headers("text/csv; charset=utf-8", `on-my-own-finance-${table}-${stamp}.csv`) });
   }
   const data: Record<string, unknown[]> = {};
   for (const t of EXPORT_TABLES) data[t] = await exportTable(t);
+  const json = JSON.stringify({ app: "on-my-own-finance", schema_version: SCHEMA_VERSION, exported_at: new Date().toISOString(), tables: data }, null, 2);
+  if (Buffer.byteLength(json) > MAX_WEB_BYTES) return tooBig();
   await audit("export_json", {});
-  return new Response(JSON.stringify({ app: "on-my-own-finance", schema_version: SCHEMA_VERSION, exported_at: new Date().toISOString(), tables: data }, null, 2), {
+  return new Response(json, {
     headers: headers("application/json; charset=utf-8", `on-my-own-finance-${stamp}.json`),
   });
 }

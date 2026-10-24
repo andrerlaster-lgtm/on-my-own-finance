@@ -186,11 +186,11 @@ export async function listMovements(itemId?: number): Promise<Movement[]> {
   return (rows as Record<string, unknown>[]).map(toMovement);
 }
 
-export async function listItems(): Promise<ItemWithStock[]> {
+export async function listItems(preloaded?: Movement[]): Promise<ItemWithStock[]> {
   const items = (await sql()`SELECT id, label, category, unit, reorder_level FROM inventory_items ORDER BY category, lower(label)`).map((r) => ({
     id: Number(r.id), label: r.label as string, category: r.category as string, unit: r.unit as string, reorder_level: r.reorder_level === null ? null : Number(r.reorder_level),
   }));
-  const all = await listMovements();
+  const all = preloaded ?? (await listMovements());
   return items.map((it) => {
     const r = replay(all.filter((m) => m.item_id === it.id));
     return r.ok ? { ...it, stock: r } : { ...it, stock: { onHand: 0, valueCents: 0, avgCostCents: 0 }, error: r.error };
@@ -315,6 +315,15 @@ export async function addReceipt(expenseId: number, bytes: Uint8Array): Promise<
   await audit("add_receipt", { expense_id: expenseId, bytes: bytes.length });
 }
 
+/** Photo ids for many expenses in one query: Map(expense id -> photo ids). */
+export async function receiptIdsFor(expenseIds: number[]): Promise<Map<number, number[]>> {
+  const out = new Map<number, number[]>();
+  if (!expenseIds.length) return out;
+  const rows = await sql().query("SELECT id, expense_id FROM expense_receipts WHERE expense_id = ANY($1::bigint[]) ORDER BY id", [expenseIds]);
+  for (const r of rows as { id: string; expense_id: string }[]) out.set(Number(r.expense_id), [...(out.get(Number(r.expense_id)) ?? []), Number(r.id)]);
+  return out;
+}
+
 export async function receiptIds(expenseId: number): Promise<number[]> {
   return (await sql()`SELECT id FROM expense_receipts WHERE expense_id = ${expenseId} ORDER BY id`).map((r) => Number(r.id));
 }
@@ -420,13 +429,13 @@ export async function getSnapshot(id: number): Promise<unknown | null> {
 /** Everything the year-end packet needs, read from the database. */
 export async function loadPacketInput(year: number, today: string): Promise<PacketInput> {
   const from = `${year}-01-01`, to = `${year}-12-31`;
-  const items = await listItems(), movements = await listMovements();
-  const expired = expiryAlerts(items, movements, await listLotUses(), await warnDaysByItem(), today).filter((a) => a.status === "expired").length;
-  return {
-    year, income: await listIncomeAll(from, to), expenses: await listExpensesAll(from, to), trips: await listTripsAll(from, to), rules: await getRules(year),
-    forms: await listForms(year), payers: await listPayers(), payments: await listPayments(year),
-    inventory: inventoryReport(items, movements, from, to), expiredLots: expired, lastImportRefunds: (await lastImportRefunds())?.n ?? 0,
-  };
+  const [movements, uses, warn, income, expenses, trips, rules, forms, payers, payments, refunds] = await Promise.all([
+    listMovements(), listLotUses(), warnDaysByItem(), listIncomeAll(from, to), listExpensesAll(from, to), listTripsAll(from, to), getRules(year),
+    listForms(year), listPayers(), listPayments(year), lastImportRefunds(),
+  ]);
+  const items = await listItems(movements);
+  const expired = expiryAlerts(items, movements, uses, warn, today).filter((a) => a.status === "expired").length;
+  return { year, income, expenses, trips, rules, forms, payers, payments, inventory: inventoryReport(items, movements, from, to), expiredLots: expired, lastImportRefunds: refunds?.n ?? 0 };
 }
 
 // ---- Phase 5: whole-year lists that must never be silently cut short, and the activity log ----

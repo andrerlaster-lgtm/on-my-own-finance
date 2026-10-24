@@ -2,7 +2,8 @@ import Link from "next/link";
 import { requireOwner } from "@/lib/auth";
 import { databaseConfigured, databaseReady, schemaVersion, runSetup, listIncomeAll, lastImportRefunds, listItems, listExpensesAll, listTripsAll, getRules, listMovements, listLotUses, warnDaysByItem, listPayments } from "@/lib/db";
 import { setAside } from "@/lib/taxforms";
-import { expiryAlerts } from "@/lib/lots";
+import { expiryAlerts, type LotUse } from "@/lib/lots";
+import type { Movement } from "@/lib/inventory";
 import { estimateProfit, summarizeExpenses } from "@/lib/expenses";
 import { formatMiles, mileageSummary, type RateInfo } from "@/lib/mileage";
 import { summarize, TAX_FORMS } from "@/lib/income";
@@ -34,20 +35,25 @@ export default async function Home() {
   const today = todayInChicago();
   const periods = periodRanges(today);
   const dash = ready && (version ?? 0) >= 2;
-  const entries = dash ? await listIncomeAll(periods.year.from < periods.week.from ? periods.year.from : periods.week.from, periods.year.to > periods.week.to ? periods.year.to : periods.week.to) : [];
-  const refunds = dash ? await lastImportRefunds() : null;
-  const allItems = dash ? await listItems() : [];
-  const low = allItems.filter((i) => isLowStock(i.stock.onHand, i.reorder_level));
-  const expiring = (version ?? 0) >= 4 ? expiryAlerts(allItems, await listMovements(), await listLotUses(), await warnDaysByItem(), today) : [];
   const full = dash && (version ?? 0) >= 3;
+  const v = version ?? 0, thisYear = Number(today.slice(0, 4));
   const wideFrom = periods.year.from < periods.week.from ? periods.year.from : periods.week.from;
   const wideTo = periods.year.to > periods.week.to ? periods.year.to : periods.week.to;
-  const exps = full ? await listExpensesAll(wideFrom, wideTo) : [];
-  const trips = full ? await listTripsAll(wideFrom, wideTo) : [];
+  const years = [...new Set([wideFrom, wideTo].map((d) => Number(d.slice(0, 4))))];
+  // everything the dashboard needs is read at the same time, not one query after another
+  const [entries, refunds, movements, exps, trips, yearRules, yearPaid, lotUses, warn, ...rateRules] = dash ? await Promise.all([
+    listIncomeAll(wideFrom, wideTo), lastImportRefunds(), listMovements(),
+    full ? listExpensesAll(wideFrom, wideTo) : Promise.resolve([]), full ? listTripsAll(wideFrom, wideTo) : Promise.resolve([]),
+    full ? getRules(thisYear) : Promise.resolve(null),
+    v >= 5 ? listPayments(thisYear).then((l) => l.reduce((t, p) => t + p.amount_cents, 0)) : Promise.resolve(0),
+    v >= 4 ? listLotUses() : Promise.resolve([]), v >= 4 ? warnDaysByItem() : Promise.resolve(new Map<number, number>()),
+    ...(full ? years.map((y) => getRules(y)) : []),
+  ]) : [[], null, [], [], [], null, 0, [], new Map<number, number>()];
+  const allItems = dash ? await listItems(movements as Movement[]) : [];
+  const low = allItems.filter((i) => isLowStock(i.stock.onHand, i.reorder_level));
+  const expiring = v >= 4 ? expiryAlerts(allItems, movements as Movement[], lotUses as LotUse[], warn as Map<number, number>, today) : [];
   const rates: Record<number, RateInfo> = {};
-  if (full) for (const y of new Set([wideFrom, wideTo].map((d) => Number(d.slice(0, 4))))) { const r = await getRules(y); rates[y] = { centsPerMile: r.mileage_rate_cents, confirmed: r.mileage_rate_confirmed }; }
-  const yearRules = full ? await getRules(Number(today.slice(0, 4))) : null;
-  const yearPaid = full && (version ?? 0) >= 5 ? (await listPayments(Number(today.slice(0, 4)))).reduce((t, p) => t + p.amount_cents, 0) : 0;
+  years.forEach((y, i) => { const r = rateRules[i]; if (r) rates[y] = { centsPerMile: r.mileage_rate_cents, confirmed: r.mileage_rate_confirmed }; });
   const cols = [["This week", periods.week], ["This month", periods.month], ["This year", periods.year]] as const;
   return (
     <main>

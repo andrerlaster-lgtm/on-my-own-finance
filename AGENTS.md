@@ -22,3 +22,5 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 - Do not guess the Square CSV format: wait for the owner's real header row. The parser must read only an allowlist of columns, flag refund rows (not import them), and dedupe on (source, payment ID).
 - Inventory never creates expenses or visits. Tips are never inside revenue.
+- CI (.github/workflows/ci.yml) must stay green. Backups are made with `npm run backup` (outside the web app); never put backup folders in the repo.
+- Pages draw limited rows and web downloads are size-capped because of Vercel's response limit; don't remove those guards.

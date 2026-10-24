@@ -6,6 +6,7 @@ import { MANUAL_SOURCES, SOURCE_LABELS, TAX_FORMS, parseIncomeForm, parseVisits 
 import { formatCents } from "@/lib/money";
 import { addDays, todayInChicago } from "@/lib/dates";
 import { Nav } from "@/components/Nav";
+import { rowsToShow } from "@/lib/paging";
 import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
@@ -39,13 +40,13 @@ async function remove(form: FormData) {
   redirect("/income");
 }
 
-export default async function Income({ searchParams }: { searchParams: Promise<{ error?: string; saved?: string }> }) {
+export default async function Income({ searchParams }: { searchParams: Promise<{ error?: string; saved?: string; rows?: string }> }) {
   await requireOwner();
   if (!(await databaseReady())) redirect("/");
   const sp = await searchParams;
   const today = todayInChicago();
   const payers = await listPayers();
-  const rows = await listIncome(addDays(today, -400), addDays(today, 31), 200);
+  const rows = await listIncome(addDays(today, -400), addDays(today, 31), rowsToShow(sp.rows) + 1);
   return (
     <main>
       <Nav />
@@ -74,7 +75,7 @@ export default async function Income({ searchParams }: { searchParams: Promise<{
         {rows.length === 0 ? <p className="muted">Nothing yet.</p> : (
           <table>
             <thead><tr><th>Date</th><th>Source</th><th>Form</th><th>Payer</th><th className="num">Revenue</th><th className="num">Tips</th><th className="num">Fee</th><th className="num">Visits</th><th /></tr></thead>
-            <tbody>{rows.map((r) => (
+            <tbody>{rows.slice(0, rowsToShow(sp.rows)).map((r) => (
               <tr key={r.id}>
                 <td>{r.occurred_on}</td><td>{SOURCE_LABELS[r.source] ?? r.source}</td><td>{TAX_FORMS.find((t) => t.id === r.tax_form)?.label.split(" (")[0]}</td><td>{payers.find((p) => p.id === r.payer_id)?.label ?? ""}</td>
                 <td className="num">{formatCents(r.gross_cents)}</td><td className="num">{formatCents(r.tip_cents)}</td><td className="num">{formatCents(r.fee_cents)}</td><td className="num"><form action={saveVisits} className="inline"><input type="hidden" name="id" value={r.id} /><input name="visits" type="number" min={0} max={1000} defaultValue={r.visits || ""} placeholder="–" aria-label="Visits" style={{ width: 64 }} /> <SubmitButton className="linkbtn">Save</SubmitButton></form></td>
@@ -83,6 +84,7 @@ export default async function Income({ searchParams }: { searchParams: Promise<{
             ))}</tbody>
           </table>
         )}
+        {rows.length > rowsToShow(sp.rows) && <p><Link href={`/income?rows=${rowsToShow(sp.rows) + 100}`}>Show 100 more</Link></p>}
       </div>
     </main>
   );

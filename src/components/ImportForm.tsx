@@ -13,7 +13,7 @@ export function ImportForm({ preview, confirm }: { preview: Action; confirm: (fd
     <>
       <form action={formAction} className="card">
         <h2>1. Choose the Square file</h2>
-        <input type="file" name="file" accept=".csv,text/csv" required />
+        <input type="file" name="file" accept=".csv,text/csv" required aria-label="Square transactions CSV file" />
         <p><button className="btn" type="submit" disabled={pending}>{pending ? "Reading…" : "Preview"}</button></p>
         {state.error && <p className="err">{state.error}</p>}
       </form>

@@ -5,6 +5,8 @@ import { PURPOSES, PURPOSE_LABELS, formatMiles, mileageSummary, parseTripForm, t
 import { formatCents } from "@/lib/money";
 import { periodRanges, todayInChicago } from "@/lib/dates";
 import { Nav } from "@/components/Nav";
+import { rowsToShow } from "@/lib/paging";
+import Link from "next/link";
 import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
@@ -28,7 +30,7 @@ async function remove(fd: FormData) {
   redirect("/mileage");
 }
 
-export default async function Mileage({ searchParams }: { searchParams: Promise<{ error?: string; saved?: string }> }) {
+export default async function Mileage({ searchParams }: { searchParams: Promise<{ error?: string; saved?: string; rows?: string }> }) {
   await requireOwner();
   if (!(await databaseReady())) redirect("/");
   const sp = await searchParams;
@@ -37,6 +39,7 @@ export default async function Mileage({ searchParams }: { searchParams: Promise<
   const year = Number(today.slice(0, 4));
   const trips = await listTripsAll(p.year.from, p.year.to);
   const rules = await getRules(year);
+  const shown = rowsToShow(sp.rows);
   const rates: Record<number, RateInfo> = { [year]: { centsPerMile: rules.mileage_rate_cents, confirmed: rules.mileage_rate_confirmed } };
   const m = mileageSummary(trips, p.month, rates), y = mileageSummary(trips, p.year, rates);
   return (
@@ -64,11 +67,11 @@ export default async function Mileage({ searchParams }: { searchParams: Promise<
         <p><SubmitButton className="btn">Add trip</SubmitButton></p>
       </form>
       <div className="card tablewrap">
-        <h2>This year</h2>
+        <h2>This year ({trips.length})</h2>
         {trips.length === 0 ? <p className="muted">No trips yet.</p> : (
           <table>
             <thead><tr><th>Date</th><th>Purpose</th><th className="num">Miles</th><th>Odometer</th><th /></tr></thead>
-            <tbody>{trips.map((t) => (
+            <tbody>{trips.slice(0, shown).map((t) => (
               <tr key={t.id}>
                 <td>{t.driven_on}</td><td>{PURPOSE_LABELS[t.purpose]}</td><td className="num">{formatMiles(t.miles_tenths)}</td>
                 <td>{t.odometer_start === null ? "" : `${t.odometer_start} to ${t.odometer_end}`}</td>
@@ -77,6 +80,7 @@ export default async function Mileage({ searchParams }: { searchParams: Promise<
             ))}</tbody>
           </table>
         )}
+        {trips.length > shown && <p><Link href={`/mileage?rows=${shown + 200}`}>Show 200 more ({trips.length - shown} older)</Link></p>}
       </div>
     </main>
   );

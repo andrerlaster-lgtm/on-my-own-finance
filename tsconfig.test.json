@@ -28,7 +28,8 @@
     "src/lib/backupFormat.ts",
     "src/lib/csp.ts",
     "src/lib/env.ts",
-    "src/lib/activity.ts"
+    "src/lib/activity.ts",
+    "src/lib/paging.ts"
   ],
   "exclude": [
     "node_modules"
