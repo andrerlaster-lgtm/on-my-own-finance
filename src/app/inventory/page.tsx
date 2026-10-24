@@ -7,6 +7,7 @@ import { todayInChicago } from "@/lib/dates";
 import { isLowStock, parseItemForm } from "@/lib/inventory";
 import { formatCents } from "@/lib/money";
 import { Nav } from "@/components/Nav";
+import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 
@@ -60,7 +61,7 @@ export default async function Inventory({ searchParams }: { searchParams: Promis
         <label htmlFor="c">Category</label><input id="c" name="category" type="text" maxLength={40} placeholder="General" />
         <label htmlFor="u">Unit (always count it the same way: box, pack, each)</label><input id="u" name="unit" type="text" maxLength={20} required />
         <label htmlFor="r">Reorder level (optional: alert at or below this many)</label><input id="r" name="reorder_level" type="number" min={0} />
-        <p><button className="btn" type="submit">Add item</button></p>
+        <p><SubmitButton className="btn">Add item</SubmitButton></p>
       </form>
     </main>
   );

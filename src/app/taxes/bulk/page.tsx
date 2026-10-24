@@ -5,6 +5,7 @@ import { databaseReady, countUndecidedSquare, bulkSetSquareForm } from "@/lib/db
 import { todayInChicago } from "@/lib/dates";
 import { parseYear } from "@/lib/taxRules";
 import { Nav } from "@/components/Nav";
+import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 const CHOICES = [{ id: "1099k", label: "1099-K" }, { id: "1099nec", label: "1099-NEC" }, { id: "none", label: "No form expected" }] as const;
@@ -36,7 +37,7 @@ export default async function Bulk({ searchParams }: { searchParams: Promise<{ y
         <label htmlFor="y" style={{ margin: 0 }}>Year</label><input id="y" name="year" type="number" min={2000} max={2100} defaultValue={year} style={{ maxWidth: 120 }} />
         <label htmlFor="f" style={{ margin: 0 }}>Set to</label>
         <select id="f" name="form" defaultValue={choice?.id ?? "1099k"}>{CHOICES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}</select>
-        <button className="btn secondary" type="submit">Preview</button>
+        <SubmitButton className="btn secondary">Preview</SubmitButton>
       </form>
       {choice && (
         <form action={apply} className="card">

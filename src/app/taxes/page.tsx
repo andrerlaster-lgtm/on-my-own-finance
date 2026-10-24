@@ -9,6 +9,7 @@ import { formatMiles } from "@/lib/mileage";
 import { todayInChicago } from "@/lib/dates";
 import { parseYear } from "@/lib/taxRules";
 import { Nav } from "@/components/Nav";
+import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 
@@ -43,7 +44,7 @@ export default async function Taxes({ searchParams }: { searchParams: Promise<{ 
       <form method="get" className="card row">
         <label htmlFor="y" style={{ margin: 0 }}>Tax year</label>
         <input id="y" name="year" type="number" min={2000} max={2100} defaultValue={year} style={{ maxWidth: 120 }} />
-        <button className="btn secondary" type="submit">Show</button>
+        <SubmitButton className="btn secondary">Show</SubmitButton>
         <Link className="btn secondary" href={`/taxes/forms?year=${year}`}>1099 forms and payers</Link>
         <Link className="btn secondary" href={`/taxes/payments?year=${year}`}>Tax payments</Link>
         <Link className="btn secondary" href={`/taxes/bulk?year=${year}`}>Set tax form on imports</Link>
@@ -99,7 +100,7 @@ export default async function Taxes({ searchParams }: { searchParams: Promise<{ 
         <form action={snapshot}>
           <input type="hidden" name="year" value={year} />
           <p className="muted">A snapshot freezes this packet so later edits don&rsquo;t change what you sent.</p>
-          <button className="btn secondary" type="submit">Save snapshot</button>
+          <SubmitButton className="btn secondary">Save snapshot</SubmitButton>
         </form>
         {snaps.length > 0 && <ul className="plain">{snaps.map((s) => <li key={s.id}><a href={`/api/tax-packet?snapshot=${s.id}`}>Snapshot {s.id} (JSON)</a> saved {s.created_at}</li>)}</ul>}
       </div>

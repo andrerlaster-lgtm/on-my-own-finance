@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireOwner } from "@/lib/auth";
-import { databaseConfigured, databaseReady, schemaVersion, runSetup, listIncome, lastImportRefunds, listItems, listExpenses, listTrips, getRules, listMovements, listLotUses, warnDaysByItem, listPayments } from "@/lib/db";
+import { databaseConfigured, databaseReady, schemaVersion, runSetup, listIncomeAll, lastImportRefunds, listItems, listExpensesAll, listTripsAll, getRules, listMovements, listLotUses, warnDaysByItem, listPayments } from "@/lib/db";
 import { setAside } from "@/lib/taxforms";
 import { expiryAlerts } from "@/lib/lots";
 import { estimateProfit, summarizeExpenses } from "@/lib/expenses";
@@ -14,6 +14,7 @@ import { envProblems } from "@/lib/env";
 import { Nav } from "@/components/Nav";
 import { revalidatePath } from "next/cache";
 import { SignOutButton } from "@/components/AuthButtons";
+import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 
@@ -33,7 +34,7 @@ export default async function Home() {
   const today = todayInChicago();
   const periods = periodRanges(today);
   const dash = ready && (version ?? 0) >= 2;
-  const entries = dash ? await listIncome(periods.year.from < periods.week.from ? periods.year.from : periods.week.from, periods.year.to > periods.week.to ? periods.year.to : periods.week.to, 5000) : [];
+  const entries = dash ? await listIncomeAll(periods.year.from < periods.week.from ? periods.year.from : periods.week.from, periods.year.to > periods.week.to ? periods.year.to : periods.week.to) : [];
   const refunds = dash ? await lastImportRefunds() : null;
   const allItems = dash ? await listItems() : [];
   const low = allItems.filter((i) => isLowStock(i.stock.onHand, i.reorder_level));
@@ -41,8 +42,8 @@ export default async function Home() {
   const full = dash && (version ?? 0) >= 3;
   const wideFrom = periods.year.from < periods.week.from ? periods.year.from : periods.week.from;
   const wideTo = periods.year.to > periods.week.to ? periods.year.to : periods.week.to;
-  const exps = full ? await listExpenses(wideFrom, wideTo, 5000) : [];
-  const trips = full ? await listTrips(wideFrom, wideTo, 5000) : [];
+  const exps = full ? await listExpensesAll(wideFrom, wideTo) : [];
+  const trips = full ? await listTripsAll(wideFrom, wideTo) : [];
   const rates: Record<number, RateInfo> = {};
   if (full) for (const y of new Set([wideFrom, wideTo].map((d) => Number(d.slice(0, 4))))) { const r = await getRules(y); rates[y] = { centsPerMile: r.mileage_rate_cents, confirmed: r.mileage_rate_confirmed }; }
   const yearRules = full ? await getRules(Number(today.slice(0, 4))) : null;
@@ -61,14 +62,14 @@ export default async function Home() {
         {configured && !ready && (
           <form action={setupDatabase}>
             <p>Connected settings found, but the tables are not created yet.</p>
-            <button className="btn" type="submit">Set up database</button>
+            <SubmitButton className="btn">Set up database</SubmitButton>
           </form>
         )}
         {ready && <p>Ready (schema version {version ?? "?"}).</p>}
         {ready && (version ?? 0) < SCHEMA_VERSION && (
           <form action={setupDatabase}>
             <p>New tables are available (version {SCHEMA_VERSION}). Updating only adds tables; nothing is changed or removed.</p>
-            <button className="btn" type="submit">Update database</button>
+            <SubmitButton className="btn">Update database</SubmitButton>
           </form>
         )}
       </div>

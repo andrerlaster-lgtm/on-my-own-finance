@@ -6,6 +6,7 @@ import { lotHistory } from "@/lib/lots";
 import { KIND_LABELS } from "@/lib/inventory";
 import { formatCents } from "@/lib/money";
 import { Nav } from "@/components/Nav";
+import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +26,7 @@ export default async function LotLookup({ searchParams }: { searchParams: Promis
       <form method="get" className="card row">
         <label htmlFor="l" style={{ margin: 0 }}>Lot number</label>
         <input id="l" name="lot" type="text" maxLength={40} defaultValue={lot} style={{ maxWidth: 220 }} />
-        <button className="btn secondary" type="submit">Look up</button>
+        <SubmitButton className="btn secondary">Look up</SubmitButton>
       </form>
       {lot && !valid && <div className="card err">Lot numbers use letters, numbers and . _ / - only.</div>}
       {lot && valid && found.length === 0 && <div className="card">No lot with that number.</div>}

@@ -6,6 +6,7 @@ import { MANUAL_SOURCES, SOURCE_LABELS, TAX_FORMS, parseIncomeForm, parseVisits 
 import { formatCents } from "@/lib/money";
 import { addDays, todayInChicago } from "@/lib/dates";
 import { Nav } from "@/components/Nav";
+import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 
@@ -66,7 +67,7 @@ export default async function Income({ searchParams }: { searchParams: Promise<{
         <label htmlFor="tp">Tips ($)</label><input id="tp" name="tip" type="text" inputMode="decimal" placeholder="0.00" />
         <label htmlFor="f">Processing fee ($)</label><input id="f" name="fee" type="text" inputMode="decimal" placeholder="0.00" />
         <label htmlFor="v">Visits (optional)</label><input id="v" name="visits" type="number" min={0} max={1000} placeholder="not entered" />
-        <p><button className="btn" type="submit">Add</button></p>
+        <p><SubmitButton className="btn">Add</SubmitButton></p>
       </form>
       <div className="card tablewrap">
         <h2>Recent entries</h2>
@@ -76,8 +77,8 @@ export default async function Income({ searchParams }: { searchParams: Promise<{
             <tbody>{rows.map((r) => (
               <tr key={r.id}>
                 <td>{r.occurred_on}</td><td>{SOURCE_LABELS[r.source] ?? r.source}</td><td>{TAX_FORMS.find((t) => t.id === r.tax_form)?.label.split(" (")[0]}</td><td>{payers.find((p) => p.id === r.payer_id)?.label ?? ""}</td>
-                <td className="num">{formatCents(r.gross_cents)}</td><td className="num">{formatCents(r.tip_cents)}</td><td className="num">{formatCents(r.fee_cents)}</td><td className="num"><form action={saveVisits} className="inline"><input type="hidden" name="id" value={r.id} /><input name="visits" type="number" min={0} max={1000} defaultValue={r.visits || ""} placeholder="–" aria-label="Visits" style={{ width: 64 }} /> <button className="linkbtn" type="submit">Save</button></form></td>
-                <td>{r.imported ? <span className="muted">imported</span> : <form action={remove} className="inline"><input type="hidden" name="id" value={r.id} /><button className="linkbtn" type="submit">Delete</button></form>}</td>
+                <td className="num">{formatCents(r.gross_cents)}</td><td className="num">{formatCents(r.tip_cents)}</td><td className="num">{formatCents(r.fee_cents)}</td><td className="num"><form action={saveVisits} className="inline"><input type="hidden" name="id" value={r.id} /><input name="visits" type="number" min={0} max={1000} defaultValue={r.visits || ""} placeholder="–" aria-label="Visits" style={{ width: 64 }} /> <SubmitButton className="linkbtn">Save</SubmitButton></form></td>
+                <td>{r.imported ? <span className="muted">imported</span> : <form action={remove} className="inline"><input type="hidden" name="id" value={r.id} /><SubmitButton className="linkbtn">Delete</SubmitButton></form>}</td>
               </tr>
             ))}</tbody>
           </table>

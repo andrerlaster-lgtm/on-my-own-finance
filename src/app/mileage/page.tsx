@@ -1,10 +1,11 @@
 import { redirect } from "next/navigation";
 import { requireOwner } from "@/lib/auth";
-import { databaseReady, listTrips, addTrip, deleteTrip, getRules } from "@/lib/db";
+import { databaseReady, listTripsAll, addTrip, deleteTrip, getRules } from "@/lib/db";
 import { PURPOSES, PURPOSE_LABELS, formatMiles, mileageSummary, parseTripForm, type RateInfo } from "@/lib/mileage";
 import { formatCents } from "@/lib/money";
 import { periodRanges, todayInChicago } from "@/lib/dates";
 import { Nav } from "@/components/Nav";
+import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 
@@ -34,7 +35,7 @@ export default async function Mileage({ searchParams }: { searchParams: Promise<
   const today = todayInChicago();
   const p = periodRanges(today);
   const year = Number(today.slice(0, 4));
-  const trips = await listTrips(p.year.from, p.year.to, 500);
+  const trips = await listTripsAll(p.year.from, p.year.to);
   const rules = await getRules(year);
   const rates: Record<number, RateInfo> = { [year]: { centsPerMile: rules.mileage_rate_cents, confirmed: rules.mileage_rate_confirmed } };
   const m = mileageSummary(trips, p.month, rates), y = mileageSummary(trips, p.year, rates);
@@ -60,7 +61,7 @@ export default async function Mileage({ searchParams }: { searchParams: Promise<
         <select id="p" name="purpose" defaultValue="patient_visits">{PURPOSES.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}</select>
         <label htmlFor="os">Odometer start (optional)</label><input id="os" name="odometer_start" type="number" min={0} />
         <label htmlFor="oe">Odometer end (optional)</label><input id="oe" name="odometer_end" type="number" min={0} />
-        <p><button className="btn" type="submit">Add trip</button></p>
+        <p><SubmitButton className="btn">Add trip</SubmitButton></p>
       </form>
       <div className="card tablewrap">
         <h2>This year</h2>
@@ -71,7 +72,7 @@ export default async function Mileage({ searchParams }: { searchParams: Promise<
               <tr key={t.id}>
                 <td>{t.driven_on}</td><td>{PURPOSE_LABELS[t.purpose]}</td><td className="num">{formatMiles(t.miles_tenths)}</td>
                 <td>{t.odometer_start === null ? "" : `${t.odometer_start} to ${t.odometer_end}`}</td>
-                <td><form action={remove} className="inline"><input type="hidden" name="id" value={t.id} /><button className="linkbtn" type="submit">Delete</button></form></td>
+                <td><form action={remove} className="inline"><input type="hidden" name="id" value={t.id} /><SubmitButton className="linkbtn">Delete</SubmitButton></form></td>
               </tr>
             ))}</tbody>
           </table>
