@@ -1,9 +1,9 @@
 /*
- * Database schema (version 4). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS and
+ * Database schema (version 5). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS and
  * ON CONFLICT only. Nothing here drops or rewrites data. Privacy rule: no column may hold a client or patient's name,
  * contact details, birth date or health information (tests/schema.test.cjs checks the column names).
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export const schemaStatements: string[] = [
   `CREATE TABLE IF NOT EXISTS app_meta (
@@ -136,10 +136,47 @@ export const schemaStatements: string[] = [
      expiry_warn_days integer NOT NULL CHECK (expiry_warn_days BETWEEN 0 AND 730),
      updated_at       timestamptz NOT NULL DEFAULT now()
    )`,
+  // ---- version 5: payers, the amounts printed on 1099 forms, estimated tax payments, and frozen packet snapshots. No EIN/SSN/contact columns by design. ----
+  `CREATE TABLE IF NOT EXISTS payers (
+     id         bigserial PRIMARY KEY,
+     label      text NOT NULL CHECK (char_length(label) BETWEEN 1 AND 60),
+     created_at timestamptz NOT NULL DEFAULT now()
+   )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS payers_label_uq ON payers (lower(label))`,
+  `CREATE TABLE IF NOT EXISTS income_entry_payers (
+     income_id bigint PRIMARY KEY REFERENCES income_entries(id),
+     payer_id  bigint NOT NULL REFERENCES payers(id)
+   )`,
+  `CREATE TABLE IF NOT EXISTS form_1099_entries (
+     id           bigserial PRIMARY KEY,
+     tax_year     integer NOT NULL CHECK (tax_year BETWEEN 2000 AND 2100),
+     form_type    text NOT NULL CHECK (form_type IN ('1099k', '1099nec')),
+     payer_id     bigint REFERENCES payers(id),
+     amount_cents bigint NOT NULL CHECK (amount_cents >= 0 AND amount_cents <= 99999999999),
+     created_at   timestamptz NOT NULL DEFAULT now(),
+     CHECK (form_type = '1099k' OR payer_id IS NOT NULL)
+   )`,
+  `CREATE TABLE IF NOT EXISTS tax_payments (
+     id           bigserial PRIMARY KEY,
+     tax_year     integer NOT NULL CHECK (tax_year BETWEEN 2000 AND 2100),
+     paid_on      date NOT NULL,
+     amount_cents bigint NOT NULL CHECK (amount_cents > 0 AND amount_cents <= 99999999999),
+     kind         text NOT NULL CHECK (kind IN ('federal_estimated', 'other')),
+     created_at   timestamptz NOT NULL DEFAULT now()
+   )`,
+  `CREATE TABLE IF NOT EXISTS tax_snapshots (
+     id         bigserial PRIMARY KEY,
+     tax_year   integer NOT NULL CHECK (tax_year BETWEEN 2000 AND 2100),
+     created_at timestamptz NOT NULL DEFAULT now(),
+     packet     jsonb NOT NULL
+   )`,
   `INSERT INTO app_meta (key, value) VALUES ('schema_version', '${SCHEMA_VERSION}')
    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now() WHERE app_meta.value::int < EXCLUDED.value::int`,
 ];
 
 /** Tables included in the full export, in order. */
-export const EXPORT_TABLES = ["app_meta", "tax_year_rules", "audit_log", "import_batches", "income_entries", "inventory_items", "inventory_movements", "expenses", "expense_receipts", "mileage_trips", "inventory_lot_uses", "inventory_settings"] as const;
+export const EXPORT_TABLES = ["app_meta", "tax_year_rules", "audit_log", "import_batches", "income_entries", "inventory_items", "inventory_movements", "expenses", "expense_receipts", "mileage_trips", "inventory_lot_uses", "inventory_settings", "payers", "income_entry_payers", "form_1099_entries", "tax_payments", "tax_snapshots"] as const;
 export type ExportTable = (typeof EXPORT_TABLES)[number];
+
+/** Column each exported table is sorted by (every other table has an id column). */
+export const EXPORT_ORDER: Record<string, string> = { app_meta: "key", tax_year_rules: "tax_year", inventory_settings: "item_id", income_entry_payers: "income_id" };

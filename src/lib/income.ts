@@ -27,9 +27,9 @@ export type TaxForm = (typeof TAX_FORMS)[number]["id"];
 
 export interface IncomeEntry {
   id: number; occurred_on: string; source: string; tax_form: TaxForm;
-  gross_cents: number; tip_cents: number; fee_cents: number; visits: number; imported: boolean;
+  gross_cents: number; tip_cents: number; fee_cents: number; visits: number; imported: boolean; payer_id: number | null;
 }
-export interface IncomeInput { occurred_on: string; source: string; tax_form: TaxForm; gross_cents: number; tip_cents: number; fee_cents: number; visits: number }
+export interface IncomeInput { occurred_on: string; source: string; tax_form: TaxForm; gross_cents: number; tip_cents: number; fee_cents: number; visits: number; payer_id: number | null }
 
 export function parseIncomeForm(form: Record<string, string | undefined>): { ok: true; value: IncomeInput } | { ok: false; errors: string[] } {
   const errors: string[] = [];
@@ -45,12 +45,15 @@ export function parseIncomeForm(form: Record<string, string | undefined>): { ok:
   if (gross === null) errors.push("Revenue: enter dollars like 150 or 150.00.");
   if (tip === null) errors.push("Tips: enter dollars like 20 or 20.00, or leave empty.");
   if (fee === null) errors.push("Processing fee: enter dollars like 4.35, or leave empty.");
+  const payerRaw = (form.payer_id ?? "").trim();
+  const payer_id = payerRaw === "" ? null : /^\d{1,12}$/.test(payerRaw) ? Number(payerRaw) : undefined;
+  if (payer_id === undefined) errors.push("Payer: choose from the list.");
   const visits = parseVisits(form.visits);
   if (visits === null) errors.push("Visits: a whole number from 0 to 1000.");
   if (!errors.length && (gross as number) + (tip as number) === 0) errors.push("Enter revenue or tips greater than zero.");
   if (!errors.length && (fee as number) > (gross as number) + (tip as number)) errors.push("Processing fee can't be more than revenue plus tips.");
   if (errors.length) return { ok: false, errors };
-  return { ok: true, value: { occurred_on: occurred_on!, source, tax_form, gross_cents: gross!, tip_cents: tip!, fee_cents: fee!, visits: visits! } };
+  return { ok: true, value: { occurred_on: occurred_on!, source, tax_form, gross_cents: gross!, tip_cents: tip!, fee_cents: fee!, visits: visits!, payer_id: payer_id as number | null } };
 }
 
 /** Visits are optional: empty means 0 ("not entered"). */

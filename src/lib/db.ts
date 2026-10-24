@@ -1,13 +1,15 @@
 import { neon } from "@neondatabase/serverless";
-import { EXPORT_TABLES, schemaStatements, SCHEMA_VERSION, type ExportTable } from "./schema";
+import { EXPORT_ORDER, EXPORT_TABLES, schemaStatements, SCHEMA_VERSION, type ExportTable } from "./schema";
 import { emptyRules, type TaxYearRules } from "./taxRules";
 import type { Expense, ExpenseInput } from "./expenses";
 import type { Trip, TripInput } from "./mileage";
 import type { Counts, ImportRow } from "./squareImport";
 import type { IncomeEntry, IncomeInput, TaxForm } from "./income";
+import type { FormEntry, FormType, Payer, Payment, PaymentKind } from "./taxforms";
 import type { ItemInput, Movement, MovementInput } from "./inventory";
 import { replay, checkAdd, type Stock } from "./inventory";
-import { checkLotConsistency, lotBalances, suggestAllocation, validateAllocation, type LotUse } from "./lots";
+import { checkLotConsistency, expiryAlerts, inventoryReport, lotBalances, suggestAllocation, validateAllocation, type LotUse } from "./lots";
+import type { PacketInput } from "./packet";
 
 /** Neon over HTTP: one statement per query, no connection to keep open. Only used after requireOwner(). */
 export const databaseConfigured = (): boolean => Boolean(process.env.DATABASE_URL);
@@ -88,7 +90,7 @@ export async function saveRules(r: TaxYearRules): Promise<void> {
 /** Every row of every table, for the JSON/CSV export. Table names come from a fixed list, never from the request. */
 export async function exportTable(table: ExportTable): Promise<Record<string, unknown>[]> {
   if (!EXPORT_TABLES.includes(table)) throw new Error("unknown table");
-  const order = table === "app_meta" ? "key" : table === "tax_year_rules" ? "tax_year" : table === "inventory_settings" ? "item_id" : "id";
+  const order = EXPORT_ORDER[table] ?? "id";
   // receipt photos are listed (id, size, date) but their image bytes are not put in the JSON/CSV export; view them one by one in the app
   const cols = table === "expense_receipts" ? "id, expense_id, content_type, bytes_len, created_at" : "*";
   return (await sql().query(`SELECT ${cols} FROM ${table} ORDER BY ${order}`)) as Record<string, unknown>[];
@@ -98,14 +100,19 @@ export async function exportTable(table: ExportTable): Promise<Record<string, un
 
 export async function listIncome(from: string, to: string, limit = 500): Promise<IncomeEntry[]> {
   const rows = await sql()`
-    SELECT id, to_char(occurred_on, 'YYYY-MM-DD') AS occurred_on, source, tax_form, gross_cents, tip_cents, fee_cents, visits, (external_id IS NOT NULL) AS imported
-    FROM income_entries WHERE occurred_on BETWEEN ${from}::date AND ${to}::date ORDER BY occurred_on DESC, id DESC LIMIT ${limit}`;
-  return rows.map((r) => ({ id: Number(r.id), occurred_on: r.occurred_on, source: r.source, tax_form: r.tax_form as TaxForm, gross_cents: Number(r.gross_cents), tip_cents: Number(r.tip_cents), fee_cents: Number(r.fee_cents), visits: Number(r.visits), imported: r.imported === true || r.imported === "t" || r.imported === "true" }));
+    SELECT i.id, to_char(i.occurred_on, 'YYYY-MM-DD') AS occurred_on, i.source, i.tax_form, i.gross_cents, i.tip_cents, i.fee_cents, i.visits,
+           (i.external_id IS NOT NULL) AS imported, p.payer_id
+    FROM income_entries i LEFT JOIN income_entry_payers p ON p.income_id = i.id
+    WHERE i.occurred_on BETWEEN ${from}::date AND ${to}::date ORDER BY i.occurred_on DESC, i.id DESC LIMIT ${limit}`;
+  return rows.map((r) => ({ id: Number(r.id), occurred_on: r.occurred_on, source: r.source, tax_form: r.tax_form as TaxForm, gross_cents: Number(r.gross_cents), tip_cents: Number(r.tip_cents), fee_cents: Number(r.fee_cents), visits: Number(r.visits), imported: r.imported === true || r.imported === "t" || r.imported === "true", payer_id: r.payer_id === null || r.payer_id === undefined ? null : Number(r.payer_id) }));
 }
 
 export async function addIncome(v: IncomeInput): Promise<void> {
-  await sql()`INSERT INTO income_entries (occurred_on, source, tax_form, gross_cents, tip_cents, fee_cents, visits)
-              VALUES (${v.occurred_on}::date, ${v.source}, ${v.tax_form}, ${v.gross_cents}, ${v.tip_cents}, ${v.fee_cents}, ${v.visits})`;
+  await sql().query(
+    `WITH i AS (INSERT INTO income_entries (occurred_on, source, tax_form, gross_cents, tip_cents, fee_cents, visits)
+                VALUES ($1::date, $2, $3, $4, $5, $6, $7) RETURNING id)
+     INSERT INTO income_entry_payers (income_id, payer_id) SELECT i.id, $8::bigint FROM i WHERE $8::bigint IS NOT NULL`,
+    [v.occurred_on, v.source, v.tax_form, v.gross_cents, v.tip_cents, v.fee_cents, v.visits, v.payer_id]);
   await audit("add_income", { occurred_on: v.occurred_on, source: v.source });
 }
 
@@ -117,7 +124,8 @@ export async function setVisits(id: number, visits: number): Promise<void> {
 
 /** Only hand-entered rows can be deleted; imported rows are removed by re-importing, never here. */
 export async function deleteManualIncome(id: number): Promise<boolean> {
-  const rows = await sql()`DELETE FROM income_entries WHERE id = ${id} AND external_id IS NULL RETURNING id`;
+  const rows = await sql()`WITH l AS (DELETE FROM income_entry_payers WHERE income_id = ${id} AND EXISTS (SELECT 1 FROM income_entries WHERE id = ${id} AND external_id IS NULL))
+                           DELETE FROM income_entries WHERE id = ${id} AND external_id IS NULL RETURNING id`;
   if (rows.length) await audit("delete_income", { id });
   return rows.length > 0;
 }
@@ -338,4 +346,79 @@ export async function deleteTrip(id: number): Promise<void> {
 export async function inventoryPurchasesTotal(from: string, to: string): Promise<number> {
   const r = await sql()`SELECT COALESCE(SUM(quantity::bigint * unit_cost_cents), 0) AS t FROM inventory_movements WHERE kind = 'purchase' AND moved_on BETWEEN ${from}::date AND ${to}::date`;
   return Number(r[0].t);
+}
+
+// ---- Phase 4: payers, 1099 form amounts, tax payments, bulk tax form, packet snapshots ----
+export async function listPayers(): Promise<Payer[]> {
+  return (await sql()`SELECT id, label FROM payers ORDER BY lower(label)`).map((r) => ({ id: Number(r.id), label: r.label as string }));
+}
+
+export async function addPayer(label: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  if ((await sql()`SELECT 1 FROM payers WHERE lower(label) = lower(${label})`).length) return { ok: false, error: "That payer is already in the list." };
+  const r = await sql()`INSERT INTO payers (label) VALUES (${label}) RETURNING id`;
+  await audit("add_payer", { id: Number(r[0].id) });
+  return { ok: true };
+}
+
+export async function listForms(year: number): Promise<FormEntry[]> {
+  return (await sql()`SELECT id, tax_year, form_type, payer_id, amount_cents FROM form_1099_entries WHERE tax_year = ${year} ORDER BY id`).map((r) => ({
+    id: Number(r.id), tax_year: Number(r.tax_year), form_type: r.form_type as FormType, payer_id: r.payer_id === null ? null : Number(r.payer_id), amount_cents: Number(r.amount_cents) }));
+}
+export async function addForm(v: { tax_year: number; form_type: FormType; payer_id: number | null; amount_cents: number }): Promise<void> {
+  await sql()`INSERT INTO form_1099_entries (tax_year, form_type, payer_id, amount_cents) VALUES (${v.tax_year}, ${v.form_type}, ${v.payer_id}, ${v.amount_cents})`;
+  await audit("add_1099_form", { tax_year: v.tax_year, form_type: v.form_type });
+}
+export async function deleteForm(id: number): Promise<void> {
+  const rows = await sql()`DELETE FROM form_1099_entries WHERE id = ${id} RETURNING id`;
+  if (rows.length) await audit("delete_1099_form", { id });
+}
+
+export async function listPayments(year: number): Promise<Payment[]> {
+  return (await sql()`SELECT id, tax_year, to_char(paid_on,'YYYY-MM-DD') AS paid_on, amount_cents, kind FROM tax_payments WHERE tax_year = ${year} ORDER BY paid_on, id`).map((r) => ({
+    id: Number(r.id), tax_year: Number(r.tax_year), paid_on: r.paid_on as string, amount_cents: Number(r.amount_cents), kind: r.kind as PaymentKind }));
+}
+export async function addPayment(v: { tax_year: number; paid_on: string; amount_cents: number; kind: PaymentKind }): Promise<void> {
+  await sql()`INSERT INTO tax_payments (tax_year, paid_on, amount_cents, kind) VALUES (${v.tax_year}, ${v.paid_on}::date, ${v.amount_cents}, ${v.kind})`;
+  await audit("add_tax_payment", { tax_year: v.tax_year, amount_cents: v.amount_cents });
+}
+export async function deletePayment(id: number): Promise<void> {
+  const rows = await sql()`DELETE FROM tax_payments WHERE id = ${id} RETURNING id`;
+  if (rows.length) await audit("delete_tax_payment", { id });
+}
+
+/** How many Square entries in the year still have no tax form chosen. */
+export async function countUndecidedSquare(year: number): Promise<number> {
+  const r = await sql()`SELECT count(*) AS n FROM income_entries WHERE source = 'square' AND tax_form = 'unknown' AND occurred_on BETWEEN ${`${year}-01-01`}::date AND ${`${year}-12-31`}::date`;
+  return Number(r[0].n);
+}
+/** Sets the tax form on Square entries of one year that are still undecided. Never overwrites a choice already made. */
+export async function bulkSetSquareForm(year: number, form: "1099k" | "1099nec" | "none"): Promise<number> {
+  const rows = await sql()`UPDATE income_entries SET tax_form = ${form} WHERE source = 'square' AND tax_form = 'unknown' AND occurred_on BETWEEN ${`${year}-01-01`}::date AND ${`${year}-12-31`}::date RETURNING id`;
+  await audit("bulk_set_tax_form", { year, form, rows: rows.length });
+  return rows.length;
+}
+
+export async function saveSnapshot(year: number, packet: unknown): Promise<number> {
+  const r = await sql()`INSERT INTO tax_snapshots (tax_year, packet) VALUES (${year}, ${JSON.stringify(packet)}::jsonb) RETURNING id`;
+  await audit("save_tax_snapshot", { id: Number(r[0].id), year });
+  return Number(r[0].id);
+}
+export async function listSnapshots(year: number): Promise<{ id: number; created_at: string }[]> {
+  return (await sql()`SELECT id, to_char(created_at AT TIME ZONE 'America/Chicago', 'YYYY-MM-DD HH24:MI') AS created_at FROM tax_snapshots WHERE tax_year = ${year} ORDER BY id DESC`).map((r) => ({ id: Number(r.id), created_at: r.created_at as string }));
+}
+export async function getSnapshot(id: number): Promise<unknown | null> {
+  const r = (await sql()`SELECT packet FROM tax_snapshots WHERE id = ${id}`)[0];
+  return r ? (typeof r.packet === "string" ? JSON.parse(r.packet) : r.packet) : null;
+}
+
+/** Everything the year-end packet needs, read from the database. */
+export async function loadPacketInput(year: number, today: string): Promise<PacketInput> {
+  const from = `${year}-01-01`, to = `${year}-12-31`;
+  const items = await listItems(), movements = await listMovements();
+  const expired = expiryAlerts(items, movements, await listLotUses(), await warnDaysByItem(), today).filter((a) => a.status === "expired").length;
+  return {
+    year, income: await listIncome(from, to, 20000), expenses: await listExpenses(from, to, 20000), trips: await listTrips(from, to, 20000), rules: await getRules(year),
+    forms: await listForms(year), payers: await listPayers(), payments: await listPayments(year),
+    inventory: inventoryReport(items, movements, from, to), expiredLots: expired, lastImportRefunds: (await lastImportRefunds())?.n ?? 0,
+  };
 }

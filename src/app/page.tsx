@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireOwner } from "@/lib/auth";
-import { databaseConfigured, databaseReady, schemaVersion, runSetup, listIncome, lastImportRefunds, listItems, listExpenses, listTrips, getRules, listMovements, listLotUses, warnDaysByItem } from "@/lib/db";
+import { databaseConfigured, databaseReady, schemaVersion, runSetup, listIncome, lastImportRefunds, listItems, listExpenses, listTrips, getRules, listMovements, listLotUses, warnDaysByItem, listPayments } from "@/lib/db";
+import { setAside } from "@/lib/taxforms";
 import { expiryAlerts } from "@/lib/lots";
 import { estimateProfit, summarizeExpenses } from "@/lib/expenses";
 import { formatMiles, mileageSummary, type RateInfo } from "@/lib/mileage";
@@ -43,6 +44,8 @@ export default async function Home() {
   const trips = full ? await listTrips(wideFrom, wideTo, 5000) : [];
   const rates: Record<number, RateInfo> = {};
   if (full) for (const y of new Set([wideFrom, wideTo].map((d) => Number(d.slice(0, 4))))) { const r = await getRules(y); rates[y] = { centsPerMile: r.mileage_rate_cents, confirmed: r.mileage_rate_confirmed }; }
+  const yearRules = full ? await getRules(Number(today.slice(0, 4))) : null;
+  const yearPaid = full && (version ?? 0) >= 5 ? (await listPayments(Number(today.slice(0, 4)))).reduce((t, p) => t + p.amount_cents, 0) : 0;
   const cols = [["This week", periods.week], ["This month", periods.month], ["This year", periods.year]] as const;
   return (
     <main>
@@ -71,6 +74,20 @@ export default async function Home() {
         <>
           {low.length > 0 && <div className="card"><h2>Low stock</h2><ul className="plain">{low.map((i) => <li key={i.id}><Link href={`/inventory/${i.id}`}>{i.label}</Link>: {i.stock.onHand} {i.unit} left</li>)}</ul></div>}
           {expiring.length > 0 && <div className="card"><h2>Expiring supplies</h2><ul className="plain">{expiring.map((a) => <li key={`${a.item_id}${a.lot_number}`}><Link href={`/inventory/${a.item_id}`}>{a.label}</Link> lot {a.lot_number}: {a.onHand} {a.unit}, {a.status === "expired" ? "expired" : `expires in ${a.daysLeft} day${a.daysLeft === 1 ? "" : "s"}`}</li>)}</ul></div>}
+          {yearRules && (version ?? 0) >= 5 && (() => {
+            const t = summarize(entries, periods.year), profit = estimateProfit(t.netAfterFees, summarizeExpenses(exps, periods.year)), a = setAside(profit, yearRules, yearPaid);
+            return (
+              <div className="card">
+                <h2>Tax set-aside, this year (estimate) <Link href="/taxes" className="muted">details</Link></h2>
+                <div className="grid2">
+                  <div className="stat">Set aside<b>{a.amountCents === null ? (a.status === "percent_not_set" ? "percent not set" : a.status === "percent_not_confirmed" ? "percent not confirmed" : "no expenses entered") : formatCents(a.amountCents)}</b></div>
+                  <div className="stat">Tax payments recorded<b>{formatCents(a.paidCents)}</b></div>
+                  {a.remainingCents !== null && <div className="stat">Still to set aside<b>{formatCents(a.remainingCents)}</b></div>}
+                </div>
+                <p className="muted">Percent of estimated profit, as confirmed with your preparer. Not a tax calculation.</p>
+              </div>
+            );
+          })()}
           {cols.map(([title, range]) => {
             const t = summarize(entries, range);
             return (
