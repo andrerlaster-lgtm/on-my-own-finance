@@ -22,7 +22,9 @@
     "src/lib/expenses.ts",
     "src/lib/mileage.ts",
     "src/lib/receipts.ts",
-    "src/lib/lots.ts"
+    "src/lib/lots.ts",
+    "src/lib/taxforms.ts",
+    "src/lib/packet.ts"
   ],
   "exclude": [
     "node_modules"
