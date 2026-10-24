@@ -7,6 +7,7 @@ import { DEFAULT_WARN_DAYS, backfillAllocations, expiryStatus, lotBalances, unas
 import { formatCents } from "@/lib/money";
 import { todayInChicago } from "@/lib/dates";
 import { Nav } from "@/components/Nav";
+import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 const back = (id: number, q: string) => redirect(`/inventory/${id}?${q}`);
@@ -105,13 +106,13 @@ export default async function Item({ params, searchParams }: { params: Promise<{
           <input type="hidden" name="item_id" value={item.id} />
           <label htmlFor="rl" style={{ margin: 0 }}>Reorder level</label>
           <input id="rl" name="reorder_level" type="number" min={0} defaultValue={item.reorder_level ?? ""} placeholder="none" style={{ maxWidth: 120 }} />
-          <button className="btn secondary" type="submit">Save</button>
+          <SubmitButton className="btn secondary">Save</SubmitButton>
         </form>
         <form action={saveWarn} className="row" style={{ marginTop: 10 }}>
           <input type="hidden" name="item_id" value={item.id} />
           <label htmlFor="wd" style={{ margin: 0 }}>Warn about expiry (days ahead)</label>
           <input id="wd" name="warn_days" type="number" min={0} max={730} defaultValue={warn ?? ""} placeholder={`${DEFAULT_WARN_DAYS} (default)`} style={{ maxWidth: 140 }} />
-          <button className="btn secondary" type="submit">Save</button>
+          <SubmitButton className="btn secondary">Save</SubmitButton>
         </form>
       </div>
       {lots.length > 0 && (
@@ -126,7 +127,7 @@ export default async function Item({ params, searchParams }: { params: Promise<{
                   <td>{l.lot_number}</td><td>{l.expires_on ?? "none"} {l.onHand > 0 && badge[st] && <span className="badge">{badge[st]}</span>}</td>
                   <td className="num">{l.received}</td><td className="num">{l.used}</td><td className="num">{l.onHand}</td>
                   <td>{st === "expired" && l.onHand > 0 && (
-                    <form action={writeOff} className="inline"><input type="hidden" name="item_id" value={item.id} /><input type="hidden" name="lot_number" value={l.lot_number} /><button className="linkbtn" type="submit">Write off {l.onHand}</button></form>
+                    <form action={writeOff} className="inline"><input type="hidden" name="item_id" value={item.id} /><input type="hidden" name="lot_number" value={l.lot_number} /><SubmitButton className="linkbtn">Write off {l.onHand}</SubmitButton></form>
                   )}</td>
                 </tr>
               );
@@ -137,7 +138,7 @@ export default async function Item({ params, searchParams }: { params: Promise<{
             <form action={assignPast}>
               <input type="hidden" name="item_id" value={item.id} />
               <p>{pendingTotal} unit{pendingTotal === 1 ? "" : "s"} of past use {pendingTotal === 1 ? "is" : "are"} not assigned to a lot, so lot counts may be too high.</p>
-              <button className="btn secondary" type="submit">Assign past uses (earliest-expiring first)</button>
+              <SubmitButton className="btn secondary">Assign past uses (earliest-expiring first)</SubmitButton>
             </form>
           )}
         </div>
@@ -166,7 +167,7 @@ export default async function Item({ params, searchParams }: { params: Promise<{
           </fieldset>
         )}
         <p className="muted">Not counted as an expense, and using stock is not counted as a visit. Mistakes are fixed with an adjustment; history is never edited.</p>
-        <p><button className="btn" type="submit">Save</button></p>
+        <p><SubmitButton className="btn">Save</SubmitButton></p>
       </form>
       <div className="card tablewrap">
         <h2>History</h2>

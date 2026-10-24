@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { requireOwner } from "@/lib/auth";
 import { databaseReady, getRules, saveRules } from "@/lib/db";
 import { RULE_FIELDS, SALES_TAX_OPTIONS, needsConfirmation, parseRulesForm, parseYear } from "@/lib/taxRules";
+import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 
@@ -34,7 +35,7 @@ export default async function Settings({ searchParams }: { searchParams: Promise
       <form method="get" className="card row">
         <label htmlFor="y" style={{ margin: 0 }}>Tax year</label>
         <input id="y" name="year" type="number" min={2000} max={2100} defaultValue={year} style={{ maxWidth: 120 }} />
-        <button className="btn secondary" type="submit">Show</button>
+        <SubmitButton className="btn secondary">Show</SubmitButton>
       </form>
       {sp.saved && <div className="note">Saved.</div>}
       {sp.error && <div className="card err">{sp.error.split(" | ").map((e) => <div key={e}>{e}</div>)}</div>}
@@ -57,7 +58,7 @@ export default async function Settings({ searchParams }: { searchParams: Promise
           {SALES_TAX_OPTIONS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
         </select>
         <label className="check"><input type="checkbox" name="sales_tax_confirmed" defaultChecked={rules.sales_tax_confirmed} /> Confirmed with my tax preparer</label>
-        <p><button className="btn" type="submit">Save {year}</button></p>
+        <p><SubmitButton className="btn">Save {year}</SubmitButton></p>
       </form>
     </main>
   );

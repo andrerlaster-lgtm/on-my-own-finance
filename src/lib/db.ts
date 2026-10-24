@@ -186,11 +186,11 @@ export async function listMovements(itemId?: number): Promise<Movement[]> {
   return (rows as Record<string, unknown>[]).map(toMovement);
 }
 
-export async function listItems(): Promise<ItemWithStock[]> {
+export async function listItems(preloaded?: Movement[]): Promise<ItemWithStock[]> {
   const items = (await sql()`SELECT id, label, category, unit, reorder_level FROM inventory_items ORDER BY category, lower(label)`).map((r) => ({
     id: Number(r.id), label: r.label as string, category: r.category as string, unit: r.unit as string, reorder_level: r.reorder_level === null ? null : Number(r.reorder_level),
   }));
-  const all = await listMovements();
+  const all = preloaded ?? (await listMovements());
   return items.map((it) => {
     const r = replay(all.filter((m) => m.item_id === it.id));
     return r.ok ? { ...it, stock: r } : { ...it, stock: { onHand: 0, valueCents: 0, avgCostCents: 0 }, error: r.error };
@@ -281,11 +281,17 @@ export async function listExpenses(from: string, to: string, limit = 500): Promi
     receipt_on_file: r.receipt_on_file === true || r.receipt_on_file === "t" || r.receipt_on_file === "true", photos: Number(r.photos) }));
 }
 
-export async function addExpense(v: ExpenseInput): Promise<number> {
-  const r = await sql()`INSERT INTO expenses (spent_on, amount_cents, category, vendor, receipt_on_file)
-                        VALUES (${v.spent_on}::date, ${v.amount_cents}, ${v.category}, ${v.vendor}, ${v.receipt_on_file}) RETURNING id`;
-  await audit("add_expense", { id: Number(r[0].id), category: v.category, amount_cents: v.amount_cents });
-  return Number(r[0].id);
+/** Saves the expense and, if given, its first photo in ONE statement, so an expense can never exist half-saved. */
+export async function addExpense(v: ExpenseInput, photo?: Uint8Array): Promise<number> {
+  const r = await sql().query(
+    `WITH e AS (INSERT INTO expenses (spent_on, amount_cents, category, vendor, receipt_on_file) VALUES ($1::date, $2, $3, $4, $5) RETURNING id),
+          p AS (INSERT INTO expense_receipts (expense_id, bytes_len, data) SELECT e.id, $6::int, decode($7::text, 'base64') FROM e WHERE $7::text IS NOT NULL RETURNING id)
+     SELECT (SELECT id FROM e) AS id`,
+    [v.spent_on, v.amount_cents, v.category, v.vendor, v.receipt_on_file, photo ? photo.length : null, photo ? Buffer.from(photo).toString("base64") : null]);
+  const id = Number((r as { id: string }[])[0].id);
+  await audit("add_expense", { id, category: v.category, amount_cents: v.amount_cents });
+  if (photo) await audit("add_receipt", { expense_id: id, bytes: photo.length });
+  return id;
 }
 
 /** Deletes the expense and its photos together, in one statement. */
@@ -307,6 +313,15 @@ export async function expenseExists(id: number): Promise<boolean> {
 export async function addReceipt(expenseId: number, bytes: Uint8Array): Promise<void> {
   await sql()`INSERT INTO expense_receipts (expense_id, bytes_len, data) VALUES (${expenseId}, ${bytes.length}, decode(${Buffer.from(bytes).toString("base64")}, 'base64'))`;
   await audit("add_receipt", { expense_id: expenseId, bytes: bytes.length });
+}
+
+/** Photo ids for many expenses in one query: Map(expense id -> photo ids). */
+export async function receiptIdsFor(expenseIds: number[]): Promise<Map<number, number[]>> {
+  const out = new Map<number, number[]>();
+  if (!expenseIds.length) return out;
+  const rows = await sql().query("SELECT id, expense_id FROM expense_receipts WHERE expense_id = ANY($1::bigint[]) ORDER BY id", [expenseIds]);
+  for (const r of rows as { id: string; expense_id: string }[]) out.set(Number(r.expense_id), [...(out.get(Number(r.expense_id)) ?? []), Number(r.id)]);
+  return out;
 }
 
 export async function receiptIds(expenseId: number): Promise<number[]> {
@@ -414,11 +429,28 @@ export async function getSnapshot(id: number): Promise<unknown | null> {
 /** Everything the year-end packet needs, read from the database. */
 export async function loadPacketInput(year: number, today: string): Promise<PacketInput> {
   const from = `${year}-01-01`, to = `${year}-12-31`;
-  const items = await listItems(), movements = await listMovements();
-  const expired = expiryAlerts(items, movements, await listLotUses(), await warnDaysByItem(), today).filter((a) => a.status === "expired").length;
-  return {
-    year, income: await listIncome(from, to, 20000), expenses: await listExpenses(from, to, 20000), trips: await listTrips(from, to, 20000), rules: await getRules(year),
-    forms: await listForms(year), payers: await listPayers(), payments: await listPayments(year),
-    inventory: inventoryReport(items, movements, from, to), expiredLots: expired, lastImportRefunds: (await lastImportRefunds())?.n ?? 0,
-  };
+  const [movements, uses, warn, income, expenses, trips, rules, forms, payers, payments, refunds] = await Promise.all([
+    listMovements(), listLotUses(), warnDaysByItem(), listIncomeAll(from, to), listExpensesAll(from, to), listTripsAll(from, to), getRules(year),
+    listForms(year), listPayers(), listPayments(year), lastImportRefunds(),
+  ]);
+  const items = await listItems(movements);
+  const expired = expiryAlerts(items, movements, uses, warn, today).filter((a) => a.status === "expired").length;
+  return { year, income, expenses, trips, rules, forms, payers, payments, inventory: inventoryReport(items, movements, from, to), expiredLots: expired, lastImportRefunds: refunds?.n ?? 0 };
+}
+
+// ---- Phase 5: whole-year lists that must never be silently cut short, and the activity log ----
+const BIG = 50_000;
+function capped<T>(rows: T[], what: string): T[] {
+  if (rows.length > BIG) throw new Error(`Too many ${what} rows to show at once (over ${BIG}).`);
+  return rows;
+}
+export const listIncomeAll = async (from: string, to: string) => capped(await listIncome(from, to, BIG + 1), "income");
+export const listExpensesAll = async (from: string, to: string) => capped(await listExpenses(from, to, BIG + 1), "expense");
+export const listTripsAll = async (from: string, to: string) => capped(await listTrips(from, to, BIG + 1), "mileage");
+
+export async function listActivity(beforeId: number | null, limit = 100): Promise<{ id: number; at: string; action: string; detail: unknown }[]> {
+  const rows = await sql()`
+    SELECT id, to_char(at AT TIME ZONE 'America/Chicago', 'YYYY-MM-DD HH24:MI') AS at, action, detail
+    FROM audit_log WHERE (${beforeId}::bigint IS NULL OR id < ${beforeId}::bigint) ORDER BY id DESC LIMIT ${limit}`;
+  return rows.map((r) => ({ id: Number(r.id), at: r.at as string, action: r.action as string, detail: r.detail }));
 }

@@ -7,7 +7,10 @@
     "build": "next build",
     "start": "next start --port 5300",
     "typecheck": "tsc --noEmit",
-    "test": "tsc -p tsconfig.test.json && node --test tests/*.test.cjs"
+    "test": "tsc -p tsconfig.test.json && node --test tests/*.test.cjs",
+    "backup": "tsc -p tsconfig.test.json && node scripts/backup.cjs",
+    "verify-backup": "tsc -p tsconfig.test.json && node scripts/verify-backup.cjs",
+    "restore-backup": "tsc -p tsconfig.test.json && node scripts/restore-backup.cjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "1.1.0",

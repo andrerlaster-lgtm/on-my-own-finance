@@ -40,5 +40,12 @@ Not tax advice. Your tax preparer decides how each item is treated.
 - **Packet and readiness list:** the Taxes page lists what still needs attention (unconfirmed rules, entries with no tax form, expenses without receipts, expired inventory, flagged refunds, form mismatches) and offers one CSV per section. **Snapshots** freeze the packet so later edits don't change what you sent.
 - **Set the tax form on imports:** fills in "not decided" Square entries of one year after a preview and confirmation; it never overwrites a choice you made.
 
+## Reliability and limits (Phase 5)
+- Whole-year totals are always computed from every row of the year; if a view ever had more than 50,000 rows it stops with an error instead of showing totals that are silently incomplete.
+- Lists on the Income, Expenses and Mileage pages draw 100 rows at a time ("Show more"); the totals above them still cover everything.
+- Web downloads over about 3.5 MB are refused with a message, because Vercel limits one response to about 4.5 MB. Use `npm run backup` for a complete backup.
+- Buttons that save something turn themselves off while saving, so a double tap cannot enter it twice.
+- **Activity** lists what changed and when, and sign-ins allowed or refused.
+
 ## Privacy
 No patient or customer names, contact details or health information are stored. Do not type them into any field.

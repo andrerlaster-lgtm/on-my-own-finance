@@ -6,6 +6,7 @@ import { inventoryReport } from "@/lib/lots";
 import { formatCents } from "@/lib/money";
 import { todayInChicago } from "@/lib/dates";
 import { Nav } from "@/components/Nav";
+import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +26,7 @@ export default async function Report({ searchParams }: { searchParams: Promise<{
       <form method="get" className="card row">
         <label htmlFor="y" style={{ margin: 0 }}>Year</label>
         <input id="y" name="year" type="number" min={2000} max={2100} defaultValue={year} style={{ maxWidth: 120 }} />
-        <button className="btn secondary" type="submit">Show</button>
+        <SubmitButton className="btn secondary">Show</SubmitButton>
         <a className="btn secondary" href={`/api/inventory-report?year=${year}`}>Download CSV</a>
       </form>
       {rep.problems.length > 0 && <div className="card err">{rep.problems.map((p) => <div key={p}>{p}</div>)}</div>}

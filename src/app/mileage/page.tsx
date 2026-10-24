@@ -1,10 +1,13 @@
 import { redirect } from "next/navigation";
 import { requireOwner } from "@/lib/auth";
-import { databaseReady, listTrips, addTrip, deleteTrip, getRules } from "@/lib/db";
+import { databaseReady, listTripsAll, addTrip, deleteTrip, getRules } from "@/lib/db";
 import { PURPOSES, PURPOSE_LABELS, formatMiles, mileageSummary, parseTripForm, type RateInfo } from "@/lib/mileage";
 import { formatCents } from "@/lib/money";
 import { periodRanges, todayInChicago } from "@/lib/dates";
 import { Nav } from "@/components/Nav";
+import { rowsToShow } from "@/lib/paging";
+import Link from "next/link";
+import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 
@@ -27,15 +30,16 @@ async function remove(fd: FormData) {
   redirect("/mileage");
 }
 
-export default async function Mileage({ searchParams }: { searchParams: Promise<{ error?: string; saved?: string }> }) {
+export default async function Mileage({ searchParams }: { searchParams: Promise<{ error?: string; saved?: string; rows?: string }> }) {
   await requireOwner();
   if (!(await databaseReady())) redirect("/");
   const sp = await searchParams;
   const today = todayInChicago();
   const p = periodRanges(today);
   const year = Number(today.slice(0, 4));
-  const trips = await listTrips(p.year.from, p.year.to, 500);
+  const trips = await listTripsAll(p.year.from, p.year.to);
   const rules = await getRules(year);
+  const shown = rowsToShow(sp.rows);
   const rates: Record<number, RateInfo> = { [year]: { centsPerMile: rules.mileage_rate_cents, confirmed: rules.mileage_rate_confirmed } };
   const m = mileageSummary(trips, p.month, rates), y = mileageSummary(trips, p.year, rates);
   return (
@@ -60,22 +64,23 @@ export default async function Mileage({ searchParams }: { searchParams: Promise<
         <select id="p" name="purpose" defaultValue="patient_visits">{PURPOSES.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}</select>
         <label htmlFor="os">Odometer start (optional)</label><input id="os" name="odometer_start" type="number" min={0} />
         <label htmlFor="oe">Odometer end (optional)</label><input id="oe" name="odometer_end" type="number" min={0} />
-        <p><button className="btn" type="submit">Add trip</button></p>
+        <p><SubmitButton className="btn">Add trip</SubmitButton></p>
       </form>
       <div className="card tablewrap">
-        <h2>This year</h2>
+        <h2>This year ({trips.length})</h2>
         {trips.length === 0 ? <p className="muted">No trips yet.</p> : (
           <table>
             <thead><tr><th>Date</th><th>Purpose</th><th className="num">Miles</th><th>Odometer</th><th /></tr></thead>
-            <tbody>{trips.map((t) => (
+            <tbody>{trips.slice(0, shown).map((t) => (
               <tr key={t.id}>
                 <td>{t.driven_on}</td><td>{PURPOSE_LABELS[t.purpose]}</td><td className="num">{formatMiles(t.miles_tenths)}</td>
                 <td>{t.odometer_start === null ? "" : `${t.odometer_start} to ${t.odometer_end}`}</td>
-                <td><form action={remove} className="inline"><input type="hidden" name="id" value={t.id} /><button className="linkbtn" type="submit">Delete</button></form></td>
+                <td><form action={remove} className="inline"><input type="hidden" name="id" value={t.id} /><SubmitButton className="linkbtn">Delete</SubmitButton></form></td>
               </tr>
             ))}</tbody>
           </table>
         )}
+        {trips.length > shown && <p><Link href={`/mileage?rows=${shown + 200}`}>Show 200 more ({trips.length - shown} older)</Link></p>}
       </div>
     </main>
   );

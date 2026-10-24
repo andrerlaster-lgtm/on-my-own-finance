@@ -7,6 +7,7 @@ import { formatCents } from "@/lib/money";
 import { todayInChicago } from "@/lib/dates";
 import { parseYear } from "@/lib/taxRules";
 import { Nav } from "@/components/Nav";
+import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 const to = (year: number | string, q: string) => redirect(`/taxes/payments?year=${year}&${q}`);
@@ -52,7 +53,7 @@ export default async function Payments({ searchParams }: { searchParams: Promise
         <label htmlFor="po">Date paid</label><input id="po" name="paid_on" type="date" defaultValue={today} required />
         <label htmlFor="am">Amount ($)</label><input id="am" name="amount" type="text" inputMode="decimal" placeholder="0.00" required />
         <label htmlFor="kd">Type</label><select id="kd" name="kind">{PAYMENT_KINDS.map((k) => <option key={k.id} value={k.id}>{k.label}</option>)}</select>
-        <p><button className="btn" type="submit">Add payment</button></p>
+        <p><SubmitButton className="btn">Add payment</SubmitButton></p>
       </form>
       <div className="card tablewrap">
         <h2>Recorded</h2>
@@ -60,7 +61,7 @@ export default async function Payments({ searchParams }: { searchParams: Promise
           <table><thead><tr><th>Paid</th><th>Type</th><th className="num">Amount</th><th /></tr></thead>
             <tbody>{list.map((x) => (
               <tr key={x.id}><td>{x.paid_on}</td><td>{PAYMENT_KINDS.find((k) => k.id === x.kind)?.label}</td><td className="num">{formatCents(x.amount_cents)}</td>
-                <td><form action={remove} className="inline"><input type="hidden" name="id" value={x.id} /><input type="hidden" name="year" value={year} /><button className="linkbtn" type="submit">Delete</button></form></td></tr>
+                <td><form action={remove} className="inline"><input type="hidden" name="id" value={x.id} /><input type="hidden" name="year" value={year} /><SubmitButton className="linkbtn">Delete</SubmitButton></form></td></tr>
             ))}</tbody>
             <tfoot><tr><th colSpan={2}>Total</th><th className="num">{formatCents(list.reduce((s, x) => s + x.amount_cents, 0))}</th><th /></tr></tfoot></table>
         )}

@@ -1,12 +1,15 @@
 import { redirect } from "next/navigation";
 import { requireOwner } from "@/lib/auth";
-import { databaseReady, listExpenses, addExpense, deleteExpense, addReceipt, countReceipts, expenseExists, receiptIds, deleteReceipt, inventoryPurchasesTotal } from "@/lib/db";
+import { databaseReady, listExpensesAll, addExpense, deleteExpense, addReceipt, countReceipts, expenseExists, receiptIdsFor, deleteReceipt, inventoryPurchasesTotal } from "@/lib/db";
 import { CATEGORIES, CATEGORY_LABELS, parseExpenseForm, summarizeExpenses } from "@/lib/expenses";
 import { MAX_RECEIPTS_PER_EXPENSE, MAX_RECEIPT_BYTES, inspectJpeg } from "@/lib/receipts";
 import { formatCents } from "@/lib/money";
 import { periodRanges, todayInChicago } from "@/lib/dates";
 import { Nav } from "@/components/Nav";
+import { rowsToShow } from "@/lib/paging";
+import Link from "next/link";
 import { ReceiptPicker } from "@/components/ReceiptPicker";
+import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 const fail = (msg: string): never => redirect(`/expenses?error=${encodeURIComponent(msg)}`);
@@ -30,8 +33,7 @@ async function add(fd: FormData) {
   if (!parsed.ok) return fail(parsed.errors.join(" | "));
   const photo = await readPhoto(fd);
   if (photo && "error" in photo) return fail(photo.error);
-  const id = await addExpense(parsed.value);
-  if (photo) await addReceipt(id, photo.bytes);
+  await addExpense(parsed.value, photo?.bytes);
   redirect("/expenses?saved=1");
 }
 
@@ -64,14 +66,15 @@ async function remove(fd: FormData) {
   redirect("/expenses");
 }
 
-export default async function Expenses({ searchParams }: { searchParams: Promise<{ error?: string; saved?: string }> }) {
+export default async function Expenses({ searchParams }: { searchParams: Promise<{ error?: string; saved?: string; rows?: string }> }) {
   await requireOwner();
   if (!(await databaseReady())) redirect("/");
   const sp = await searchParams;
   const today = todayInChicago();
   const p = periodRanges(today);
-  const list = await listExpenses(p.year.from, p.year.to, 500);
-  const withPhotos = await Promise.all(list.map(async (e) => ({ e, ids: e.photos ? await receiptIds(e.id) : [] })));
+  const list = await listExpensesAll(p.year.from, p.year.to);
+  const shown = rowsToShow(sp.rows), photoIds = await receiptIdsFor(list.slice(0, shown).filter((e) => e.photos > 0).map((e) => e.id));
+  const withPhotos = list.slice(0, shown).map((e) => ({ e, ids: photoIds.get(e.id) ?? [] }));
   const month = summarizeExpenses(list, p.month), year = summarizeExpenses(list, p.year);
   const invMonth = await inventoryPurchasesTotal(p.month.from, p.month.to), invYear = await inventoryPurchasesTotal(p.year.from, p.year.to);
   return (
@@ -96,10 +99,10 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
         <label htmlFor="v">Vendor (business name only, optional)</label><input id="v" name="vendor" type="text" maxLength={60} />
         <label className="check"><input type="checkbox" name="receipt_on_file" /> I kept the paper or digital receipt</label>
         <label>Receipt photo</label><ReceiptPicker />
-        <p><button className="btn" type="submit">Add expense</button></p>
+        <p><SubmitButton className="btn">Add expense</SubmitButton></p>
       </form>
       <div className="card tablewrap">
-        <h2>This year</h2>
+        <h2>This year ({list.length})</h2>
         {withPhotos.length === 0 ? <p className="muted">Nothing yet.</p> : (
           <table>
             <thead><tr><th>Date</th><th>Category</th><th>Vendor</th><th className="num">Amount</th><th>Receipt</th><th /></tr></thead>
@@ -110,17 +113,18 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
                   {e.receipt_on_file ? "kept" : ""}
                   {ids.map((id, i) => (
                     <div key={id}><a href={`/api/receipts/${id}`} target="_blank" rel="noreferrer">Photo {i + 1}</a>{" "}
-                      <form action={removePhoto} className="inline"><input type="hidden" name="id" value={id} /><button className="linkbtn" type="submit">remove</button></form></div>
+                      <form action={removePhoto} className="inline"><input type="hidden" name="id" value={id} /><SubmitButton className="linkbtn">remove</SubmitButton></form></div>
                   ))}
                   {ids.length < MAX_RECEIPTS_PER_EXPENSE && (
-                    <form action={addPhoto}><input type="hidden" name="expense_id" value={e.id} /><ReceiptPicker /><button className="linkbtn" type="submit">Add photo</button></form>
+                    <form action={addPhoto}><input type="hidden" name="expense_id" value={e.id} /><ReceiptPicker /><SubmitButton className="linkbtn">Add photo</SubmitButton></form>
                   )}
                 </td>
-                <td><form action={remove} className="inline"><input type="hidden" name="id" value={e.id} /><button className="linkbtn" type="submit">Delete</button></form></td>
+                <td><form action={remove} className="inline"><input type="hidden" name="id" value={e.id} /><SubmitButton className="linkbtn">Delete</SubmitButton></form></td>
               </tr>
             ))}</tbody>
           </table>
         )}
+        {list.length > shown && <p><Link href={`/expenses?rows=${shown + 200}`}>Show 200 more ({list.length - shown} older)</Link></p>}
       </div>
     </main>
   );

@@ -7,6 +7,7 @@ import { formatCents } from "@/lib/money";
 import { todayInChicago } from "@/lib/dates";
 import { parseYear } from "@/lib/taxRules";
 import { Nav } from "@/components/Nav";
+import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 const to = (year: number | string, q: string) => redirect(`/taxes/forms?year=${year}&${q}`);
@@ -59,7 +60,7 @@ export default async function FormsPage({ searchParams }: { searchParams: Promis
         <input type="hidden" name="year" value={year} />
         <p className="muted">{payers.length ? payers.map((p) => p.label).join(", ") : "None yet."}</p>
         <label htmlFor="pl">Add a payer (the business that pays you)</label><input id="pl" name="label" type="text" maxLength={60} />
-        <p><button className="btn secondary" type="submit">Add payer</button></p>
+        <p><SubmitButton className="btn secondary">Add payer</SubmitButton></p>
       </form>
       <form action={addFormAction} className="card">
         <h2>Add a form for {year}</h2>
@@ -68,7 +69,7 @@ export default async function FormsPage({ searchParams }: { searchParams: Promis
         <label htmlFor="fp">Payer (needed for a 1099-NEC; leave empty for Square&rsquo;s 1099-K)</label>
         <select id="fp" name="payer_id" defaultValue=""><option value="">(none)</option>{payers.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}</select>
         <label htmlFor="fa">Amount on the form ($)</label><input id="fa" name="amount" type="text" inputMode="decimal" placeholder="0.00" />
-        <p><button className="btn" type="submit">Add form</button></p>
+        <p><SubmitButton className="btn">Add form</SubmitButton></p>
       </form>
       <div className="card tablewrap">
         <h2>Forms entered for {year}</h2>
@@ -76,7 +77,7 @@ export default async function FormsPage({ searchParams }: { searchParams: Promis
           <table><thead><tr><th>Form</th><th>Payer</th><th className="num">Amount</th><th /></tr></thead>
             <tbody>{forms.map((x) => (
               <tr key={x.id}><td>{FORM_LABELS[x.form_type]}</td><td>{payers.find((p) => p.id === x.payer_id)?.label ?? ""}</td><td className="num">{formatCents(x.amount_cents)}</td>
-                <td><form action={removeForm} className="inline"><input type="hidden" name="id" value={x.id} /><input type="hidden" name="year" value={year} /><button className="linkbtn" type="submit">Delete</button></form></td></tr>
+                <td><form action={removeForm} className="inline"><input type="hidden" name="id" value={x.id} /><input type="hidden" name="year" value={year} /><SubmitButton className="linkbtn">Delete</SubmitButton></form></td></tr>
             ))}</tbody></table>
         )}
       </div>
