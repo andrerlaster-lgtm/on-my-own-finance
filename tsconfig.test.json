@@ -24,7 +24,8 @@
     "src/lib/receipts.ts",
     "src/lib/lots.ts",
     "src/lib/taxforms.ts",
-    "src/lib/packet.ts"
+    "src/lib/packet.ts",
+    "src/lib/backupFormat.ts"
   ],
   "exclude": [
     "node_modules"
