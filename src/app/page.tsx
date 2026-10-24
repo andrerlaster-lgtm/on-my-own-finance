@@ -10,6 +10,7 @@ import { isLowStock } from "@/lib/inventory";
 import { formatCents } from "@/lib/money";
 import { periodRanges, todayInChicago } from "@/lib/dates";
 import { SCHEMA_VERSION } from "@/lib/schema";
+import { envProblems } from "@/lib/env";
 import { Nav } from "@/components/Nav";
 import { revalidatePath } from "next/cache";
 import { SignOutButton } from "@/components/AuthButtons";
@@ -52,6 +53,7 @@ export default async function Home() {
       <Nav />
       <h1>On My Own Finance</h1>
       <p className="muted">Signed in as {owner.name}{owner.via === "dev-bypass" ? " (local test mode)" : ""}.</p>
+      {(() => { const p = envProblems(process.env, process.env.NODE_ENV === "production"); return p.length > 0 ? <div className="card err"><b>Server settings need attention</b><ul className="plain">{p.map((x) => <li key={x}>{x}</li>)}</ul></div> : null; })()}
       <div className="note">Profit figures are estimates only. Tax numbers, tip treatment and sales-tax status are for your tax preparer to confirm.</div>
       <div className="card">
         <h2>Database</h2>

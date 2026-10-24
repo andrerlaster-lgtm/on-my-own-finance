@@ -2,6 +2,7 @@ import type { AuthOptions } from "next-auth";
 import { getServerSession } from "next-auth/next";
 import GitHubProvider from "next-auth/providers/github";
 import { redirect } from "next/navigation";
+import { audit, databaseConfigured } from "./db";
 
 /**
  * Access rules for On My Own Finance.
@@ -44,8 +45,10 @@ export const authOptions: AuthOptions = {
   callbacks: {
     async signIn({ account, profile }) {
       const allowed = allowedGithubId();
-      if (!allowed || account?.provider !== "github" || !profile) return false;
-      return String((profile as { id?: number | string }).id) === allowed;
+      const ok = Boolean(allowed && account?.provider === "github" && profile && String((profile as { id?: number | string }).id) === allowed);
+      // Record the outcome only (no account names or IDs). Logging must never block or break sign-in.
+      try { if (databaseConfigured()) await audit(ok ? "signin_allowed" : "signin_refused"); } catch { /* ignore */ }
+      return ok;
     },
     async jwt({ token, account, profile }) {
       if (account?.provider === "github" && profile) token.githubId = String((profile as { id?: number | string }).id);
