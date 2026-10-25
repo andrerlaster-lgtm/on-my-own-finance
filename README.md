@@ -7,6 +7,7 @@ Private business-finance tracker (visits, revenue, fees, expenses, profit, milea
 - Setup steps: [docs/SETUP.md](docs/SETUP.md) · go-live checklist: [docs/GO_LIVE.md](docs/GO_LIVE.md) · if something looks wrong: [docs/INCIDENT.md](docs/INCIDENT.md)
 - Backups and restore: [docs/BACKUPS.md](docs/BACKUPS.md)
 - Square import: [docs/SQUARE_IMPORT.md](docs/SQUARE_IMPORT.md)
+- Look and feel: [docs/DESIGN.md](docs/DESIGN.md)
 - How numbers are counted: [docs/ACCOUNTING.md](docs/ACCOUNTING.md)
 - Privacy: the database has no place for patient/client names, contact details or health information.
 

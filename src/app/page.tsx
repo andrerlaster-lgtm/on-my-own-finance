@@ -12,9 +12,7 @@ import { formatCents } from "@/lib/money";
 import { periodRanges, todayInChicago } from "@/lib/dates";
 import { SCHEMA_VERSION } from "@/lib/schema";
 import { envProblems } from "@/lib/env";
-import { Nav } from "@/components/Nav";
 import { revalidatePath } from "next/cache";
-import { SignOutButton } from "@/components/AuthButtons";
 import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
@@ -57,12 +55,20 @@ export default async function Home() {
   const cols = [["This week", periods.week], ["This month", periods.month], ["This year", periods.year]] as const;
   return (
     <main>
-      <Nav />
-      <h1>On My Own Finance</h1>
-      <p className="muted">Signed in as {owner.name}{owner.via === "dev-bypass" ? " (local test mode)" : ""}.</p>
+      <h1>Overview</h1>
+      <p className="lede">{new Date(`${today}T12:00:00`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })} · signed in as {owner.name}{owner.via === "dev-bypass" ? " (local test mode)" : ""}</p>
       {(() => { const p = envProblems(process.env, process.env.NODE_ENV === "production"); return p.length > 0 ? <div className="card err"><b>Server settings need attention</b><ul className="plain">{p.map((x) => <li key={x}>{x}</li>)}</ul></div> : null; })()}
       <div className="note">Profit figures are estimates only. Tax numbers, tip treatment and sales-tax status are for your tax preparer to confirm.</div>
-      <div className="card">
+      {ready && (version ?? 0) >= SCHEMA_VERSION && <p className="status"><span className="dot" aria-hidden="true" />Database ready (version {version})</p>}
+      {dash && (
+        <div className="quick" aria-label="Add something">
+          <Link href="/income"><b>Add income</b><span>Money in, tips, visits</span></Link>
+          <Link href="/expenses"><b>Add expense</b><span>With a receipt photo</span></Link>
+          <Link href="/mileage"><b>Log a trip</b><span>Miles for the day</span></Link>
+          <Link href="/income/import"><b>Import Square</b><span>Upload your export</span></Link>
+        </div>
+      )}
+      {!(ready && (version ?? 0) >= SCHEMA_VERSION) && <div className="card">
         <h2>Database</h2>
         {!configured && <p className="err">DATABASE_URL is not set. See docs/SETUP.md.</p>}
         {configured && !ready && (
@@ -78,11 +84,11 @@ export default async function Home() {
             <SubmitButton className="btn">Update database</SubmitButton>
           </form>
         )}
-      </div>
+      </div>}
       {dash && (
         <>
-          {low.length > 0 && <div className="card"><h2>Low stock</h2><ul className="plain">{low.map((i) => <li key={i.id}><Link href={`/inventory/${i.id}`}>{i.label}</Link>: {i.stock.onHand} {i.unit} left</li>)}</ul></div>}
-          {expiring.length > 0 && <div className="card"><h2>Expiring supplies</h2><ul className="plain">{expiring.map((a) => <li key={`${a.item_id}${a.lot_number}`}><Link href={`/inventory/${a.item_id}`}>{a.label}</Link> lot {a.lot_number}: {a.onHand} {a.unit}, {a.status === "expired" ? "expired" : `expires in ${a.daysLeft} day${a.daysLeft === 1 ? "" : "s"}`}</li>)}</ul></div>}
+          {low.length > 0 && <div className="card"><h2>Low stock <span className="muted">{low.length} item{low.length === 1 ? "" : "s"}</span></h2><ul className="plain">{low.slice(0, 6).map((i) => <li key={i.id}><Link href={`/inventory/${i.id}`}>{i.label}</Link>: {i.stock.onHand} {i.unit} left</li>)}</ul>{low.length > 6 && <p className="muted"><Link href="/inventory">See all {low.length} in Supplies</Link></p>}</div>}
+          {expiring.length > 0 && <div className="card"><h2>Expiring supplies <span className="muted">{expiring.length} lot{expiring.length === 1 ? "" : "s"}</span></h2><ul className="plain">{expiring.slice(0, 6).map((a) => <li key={`${a.item_id}${a.lot_number}`}><Link href={`/inventory/${a.item_id}`}>{a.label}</Link> lot {a.lot_number}: {a.onHand} {a.unit}, {a.status === "expired" ? "expired" : `expires in ${a.daysLeft} day${a.daysLeft === 1 ? "" : "s"}`}</li>)}</ul>{expiring.length > 6 && <p className="muted"><Link href="/inventory">See all {expiring.length} in Supplies</Link></p>}</div>}
           {yearRules && (version ?? 0) >= 5 && (() => {
             const t = summarize(entries, periods.year), profit = estimateProfit(t.netAfterFees, summarizeExpenses(exps, periods.year)), a = setAside(profit, yearRules, yearPaid);
             return (
@@ -132,7 +138,7 @@ export default async function Home() {
         </>
       )}
       {ready && (
-        <>
+        <div className="tools">
           <div className="card">
             <h2>Tax-year rules</h2>
             <p className="muted">Mileage rate, set-aside, 1099-K and 1099-NEC thresholds, sales tax. Nothing is assumed.</p>
@@ -146,9 +152,8 @@ export default async function Home() {
               <a className="btn secondary" href="/api/export?table=tax_year_rules">Tax rules (CSV)</a>
             </div>
           </div>
-        </>
+        </div>
       )}
-      <SignOutButton />
     </main>
   );
 }

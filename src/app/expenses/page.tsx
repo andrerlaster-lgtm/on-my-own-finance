@@ -5,7 +5,6 @@ import { CATEGORIES, CATEGORY_LABELS, parseExpenseForm, summarizeExpenses } from
 import { MAX_RECEIPTS_PER_EXPENSE, MAX_RECEIPT_BYTES, inspectJpeg } from "@/lib/receipts";
 import { formatCents } from "@/lib/money";
 import { periodRanges, todayInChicago } from "@/lib/dates";
-import { Nav } from "@/components/Nav";
 import { rowsToShow } from "@/lib/paging";
 import Link from "next/link";
 import { ReceiptPicker } from "@/components/ReceiptPicker";
@@ -79,7 +78,6 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
   const invMonth = await inventoryPurchasesTotal(p.month.from, p.month.to), invYear = await inventoryPurchasesTotal(p.year.from, p.year.to);
   return (
     <main>
-      <Nav />
       <h1>Expenses</h1>
       <div className="note">Enter supply purchases here too: the inventory ledger does not create expenses. Do not enter Square processing fees; they are already saved on each imported payment. Do not put patient information in any field or photo.</div>
       {sp.saved && <div className="note">Saved.</div>}
@@ -101,28 +99,28 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
         <label>Receipt photo</label><ReceiptPicker />
         <p><SubmitButton className="btn">Add expense</SubmitButton></p>
       </form>
-      <div className="card tablewrap">
+      <div className="card">
         <h2>This year ({list.length})</h2>
         {withPhotos.length === 0 ? <p className="muted">Nothing yet.</p> : (
-          <table>
-            <thead><tr><th>Date</th><th>Category</th><th>Vendor</th><th className="num">Amount</th><th>Receipt</th><th /></tr></thead>
-            <tbody>{withPhotos.map(({ e, ids }) => (
-              <tr key={e.id}>
-                <td>{e.spent_on}</td><td>{CATEGORY_LABELS[e.category]}</td><td>{e.vendor ?? ""}</td><td className="num">{formatCents(e.amount_cents)}</td>
-                <td>
-                  {e.receipt_on_file ? "kept" : ""}
-                  {ids.map((id, i) => (
-                    <div key={id}><a href={`/api/receipts/${id}`} target="_blank" rel="noreferrer">Photo {i + 1}</a>{" "}
-                      <form action={removePhoto} className="inline"><input type="hidden" name="id" value={id} /><SubmitButton className="linkbtn">remove</SubmitButton></form></div>
-                  ))}
-                  {ids.length < MAX_RECEIPTS_PER_EXPENSE && (
-                    <form action={addPhoto}><input type="hidden" name="expense_id" value={e.id} /><ReceiptPicker /><SubmitButton className="linkbtn">Add photo</SubmitButton></form>
-                  )}
-                </td>
-                <td><form action={remove} className="inline"><input type="hidden" name="id" value={e.id} /><SubmitButton className="linkbtn">Delete</SubmitButton></form></td>
-              </tr>
-            ))}</tbody>
-          </table>
+          <ul className="entries">{withPhotos.map(({ e, ids }) => (
+            <li className="entry" key={e.id}>
+              <span className="what">{e.vendor ?? CATEGORY_LABELS[e.category]}</span>
+              <span className="amt">{formatCents(e.amount_cents)}</span>
+              <span className="meta">{e.spent_on} · {CATEGORY_LABELS[e.category]}{e.receipt_on_file ? " · receipt kept" : ""}{ids.length ? ` · ${ids.length} photo${ids.length === 1 ? "" : "s"}` : ""}</span>
+              <div className="acts">
+                {ids.map((id, i) => (
+                  <span key={id}><a href={`/api/receipts/${id}`} target="_blank" rel="noreferrer">Photo {i + 1}</a>
+                    <form action={removePhoto} className="inline"><input type="hidden" name="id" value={id} /><SubmitButton className="linkbtn">remove</SubmitButton></form></span>
+                ))}
+                {ids.length < MAX_RECEIPTS_PER_EXPENSE && (
+                  <details className="mini"><summary>Add photo</summary>
+                    <form action={addPhoto}><input type="hidden" name="expense_id" value={e.id} /><ReceiptPicker /><SubmitButton className="btn secondary">Save photo</SubmitButton></form>
+                  </details>
+                )}
+                <form action={remove} className="inline"><input type="hidden" name="id" value={e.id} /><SubmitButton className="linkbtn">Delete</SubmitButton></form>
+              </div>
+            </li>
+          ))}</ul>
         )}
         {list.length > shown && <p><Link href={`/expenses?rows=${shown + 200}`}>Show 200 more ({list.length - shown} older)</Link></p>}
       </div>

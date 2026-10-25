@@ -5,7 +5,6 @@ import { databaseReady, listItems, listMovements } from "@/lib/db";
 import { inventoryReport } from "@/lib/lots";
 import { formatCents } from "@/lib/money";
 import { todayInChicago } from "@/lib/dates";
-import { Nav } from "@/components/Nav";
 import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +18,6 @@ export default async function Report({ searchParams }: { searchParams: Promise<{
   const t = rep.totals, f = formatCents;
   return (
     <main>
-      <Nav />
       <p><Link href="/inventory">← Inventory</Link></p>
       <h1>Inventory report {year}</h1>
       <div className="note">For your tax preparer. Values use the weighted-average cost at the time of each change. Purchases and write-offs are shown here but are not recorded as expenses, and nothing here is tax advice.</div>

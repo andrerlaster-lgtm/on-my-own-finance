@@ -5,7 +5,6 @@ import { databaseReady, listItems, listMovements, listLotUses } from "@/lib/db";
 import { lotHistory } from "@/lib/lots";
 import { KIND_LABELS } from "@/lib/inventory";
 import { formatCents } from "@/lib/money";
-import { Nav } from "@/components/Nav";
 import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +18,6 @@ export default async function LotLookup({ searchParams }: { searchParams: Promis
   const found = valid ? lotHistory(lot, await listItems(), await listMovements(), await listLotUses()) : [];
   return (
     <main>
-      <Nav />
       <p><Link href="/inventory">← Inventory</Link></p>
       <h1>Lot lookup</h1>
       <div className="note">Shows when a lot arrived, its expiry, and when and how much was used. Uses are not linked to visits or people, so a lot cannot be traced to a patient from here.</div>

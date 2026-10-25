@@ -6,7 +6,6 @@ import { PAYMENT_KINDS, parsePaymentForm } from "@/lib/taxforms";
 import { formatCents } from "@/lib/money";
 import { todayInChicago } from "@/lib/dates";
 import { parseYear } from "@/lib/taxRules";
-import { Nav } from "@/components/Nav";
 import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
@@ -41,7 +40,6 @@ export default async function Payments({ searchParams }: { searchParams: Promise
   const list = await listPayments(year);
   return (
     <main>
-      <Nav />
       <p><Link href={`/taxes?year=${year}`}>← Taxes {year}</Link></p>
       <h1>Tax payments for {year}</h1>
       <div className="note">Record payments you actually made (for example an estimated payment). Due dates and amounts come from your tax preparer; this app does not remind or calculate them.</div>

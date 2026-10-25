@@ -5,7 +5,6 @@ import { databaseReady, listIncome, addIncome, deleteManualIncome, setVisits, li
 import { MANUAL_SOURCES, SOURCE_LABELS, TAX_FORMS, parseIncomeForm, parseVisits } from "@/lib/income";
 import { formatCents } from "@/lib/money";
 import { addDays, todayInChicago } from "@/lib/dates";
-import { Nav } from "@/components/Nav";
 import { rowsToShow } from "@/lib/paging";
 import { SubmitButton } from "@/components/SubmitButton";
 
@@ -49,7 +48,6 @@ export default async function Income({ searchParams }: { searchParams: Promise<{
   const rows = await listIncome(addDays(today, -400), addDays(today, 31), rowsToShow(sp.rows) + 1);
   return (
     <main>
-      <Nav />
       <h1>Income</h1>
       <p><Link className="btn secondary" href="/income/import">Import Square CSV</Link></p>
       <div className="note">Revenue here excludes tips and excludes refunds. Tips are kept in their own column so nothing is counted twice. Which 1099 form applies is a separate choice from where the money came from; ask your tax preparer.</div>
@@ -70,19 +68,20 @@ export default async function Income({ searchParams }: { searchParams: Promise<{
         <label htmlFor="v">Visits (optional)</label><input id="v" name="visits" type="number" min={0} max={1000} placeholder="not entered" />
         <p><SubmitButton className="btn">Add</SubmitButton></p>
       </form>
-      <div className="card tablewrap">
+      <div className="card">
         <h2>Recent entries</h2>
         {rows.length === 0 ? <p className="muted">Nothing yet.</p> : (
-          <table>
-            <thead><tr><th>Date</th><th>Source</th><th>Form</th><th>Payer</th><th className="num">Revenue</th><th className="num">Tips</th><th className="num">Fee</th><th className="num">Visits</th><th /></tr></thead>
-            <tbody>{rows.slice(0, rowsToShow(sp.rows)).map((r) => (
-              <tr key={r.id}>
-                <td>{r.occurred_on}</td><td>{SOURCE_LABELS[r.source] ?? r.source}</td><td>{TAX_FORMS.find((t) => t.id === r.tax_form)?.label.split(" (")[0]}</td><td>{payers.find((p) => p.id === r.payer_id)?.label ?? ""}</td>
-                <td className="num">{formatCents(r.gross_cents)}</td><td className="num">{formatCents(r.tip_cents)}</td><td className="num">{formatCents(r.fee_cents)}</td><td className="num"><form action={saveVisits} className="inline"><input type="hidden" name="id" value={r.id} /><input name="visits" type="number" min={0} max={1000} defaultValue={r.visits || ""} placeholder="–" aria-label="Visits" style={{ width: 64 }} /> <SubmitButton className="linkbtn">Save</SubmitButton></form></td>
-                <td>{r.imported ? <span className="muted">imported</span> : <form action={remove} className="inline"><input type="hidden" name="id" value={r.id} /><SubmitButton className="linkbtn">Delete</SubmitButton></form>}</td>
-              </tr>
-            ))}</tbody>
-          </table>
+          <ul className="entries">{rows.slice(0, rowsToShow(sp.rows)).map((r) => (
+            <li className="entry" key={r.id}>
+              <span className="what">{SOURCE_LABELS[r.source] ?? r.source}{r.payer_id !== null && payers.find((p) => p.id === r.payer_id) ? ` · ${payers.find((p) => p.id === r.payer_id)?.label}` : ""}</span>
+              <span className="amt">{formatCents(r.gross_cents + r.tip_cents)}</span>
+              <span className="meta">{r.occurred_on} · {TAX_FORMS.find((t) => t.id === r.tax_form)?.label.split(" (")[0]} · revenue {formatCents(r.gross_cents)} · tips {formatCents(r.tip_cents)} · fee {formatCents(r.fee_cents)}</span>
+              <div className="acts">
+                <form action={saveVisits} className="visits"><input type="hidden" name="id" value={r.id} /><label htmlFor={`v${r.id}`}>Visits</label><input id={`v${r.id}`} name="visits" type="number" min={0} max={1000} defaultValue={r.visits || ""} placeholder="–" /><SubmitButton className="linkbtn">Save</SubmitButton></form>
+                {r.imported ? <span className="muted">imported from Square</span> : <form action={remove} className="inline"><input type="hidden" name="id" value={r.id} /><SubmitButton className="linkbtn">Delete</SubmitButton></form>}
+              </div>
+            </li>
+          ))}</ul>
         )}
         {rows.length > rowsToShow(sp.rows) && <p><Link href={`/income?rows=${rowsToShow(sp.rows) + 100}`}>Show 100 more</Link></p>}
       </div>

@@ -8,7 +8,6 @@ import { formatCents } from "@/lib/money";
 import { formatMiles } from "@/lib/mileage";
 import { todayInChicago } from "@/lib/dates";
 import { parseYear } from "@/lib/taxRules";
-import { Nav } from "@/components/Nav";
 import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
@@ -37,7 +36,6 @@ export default async function Taxes({ searchParams }: { searchParams: Promise<{ 
   const th = (name: string, t: typeof k.forms.thresholdK) => t.status === "unset" ? `${name}: threshold not set` : t.status === "unconfirmed" ? `${name}: threshold set but not confirmed` : `${name}: ${f(t.receipts)} of ${f(t.thresholdCents ?? 0)} (${t.status === "reached" ? "reached" : "below"})`;
   return (
     <main>
-      <Nav />
       <h1>Taxes {year}</h1>
       <div className="note">{k.caveats[0]} No tax is calculated here.</div>
       {sp.saved && <div className="note">Snapshot saved.</div>}
