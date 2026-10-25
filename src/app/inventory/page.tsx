@@ -6,7 +6,6 @@ import { expiryAlerts } from "@/lib/lots";
 import { todayInChicago } from "@/lib/dates";
 import { isLowStock, parseItemForm } from "@/lib/inventory";
 import { formatCents } from "@/lib/money";
-import { Nav } from "@/components/Nav";
 import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
@@ -33,7 +32,6 @@ export default async function Inventory({ searchParams }: { searchParams: Promis
   const low = items.filter((i) => isLowStock(i.stock.onHand, i.reorder_level));
   return (
     <main>
-      <Nav />
       <h1>Inventory</h1>
       <div className="note">Inventory is tracked on its own. A purchase here is not counted as an expense yet, and using supplies is not counted as a visit. Do not put patient information in any field.</div>
       {sp.error && <div className="card err">{sp.error.split(" | ").map((e) => <div key={e}>{e}</div>)}</div>}

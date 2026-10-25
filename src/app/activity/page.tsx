@@ -3,7 +3,6 @@ import { redirect } from "next/navigation";
 import { requireOwner } from "@/lib/auth";
 import { databaseReady, listActivity } from "@/lib/db";
 import { describeActivity } from "@/lib/activity";
-import { Nav } from "@/components/Nav";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +14,6 @@ export default async function Activity({ searchParams }: { searchParams: Promise
   const rows = await listActivity(before, 100);
   return (
     <main>
-      <Nav />
       <h1>Activity</h1>
       <div className="note">What was changed and when (Central time), newest first. It records the kind of change and record numbers or amounts, never names, notes or card details. Use it to spot anything you did not do.</div>
       <div className="card tablewrap">

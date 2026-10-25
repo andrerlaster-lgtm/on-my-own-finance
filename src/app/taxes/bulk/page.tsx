@@ -4,7 +4,6 @@ import { requireOwner } from "@/lib/auth";
 import { databaseReady, countUndecidedSquare, bulkSetSquareForm } from "@/lib/db";
 import { todayInChicago } from "@/lib/dates";
 import { parseYear } from "@/lib/taxRules";
-import { Nav } from "@/components/Nav";
 import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
@@ -28,7 +27,6 @@ export default async function Bulk({ searchParams }: { searchParams: Promise<{ y
   const count = await countUndecidedSquare(year);
   return (
     <main>
-      <Nav />
       <p><Link href={`/taxes?year=${year}`}>← Taxes {year}</Link></p>
       <h1>Set the tax form on Square entries</h1>
       <div className="note">Which form applies is your tax preparer&rsquo;s decision. This only fills in Square entries of one year that still say &ldquo;not decided&rdquo;; it never changes an entry where you already chose.</div>

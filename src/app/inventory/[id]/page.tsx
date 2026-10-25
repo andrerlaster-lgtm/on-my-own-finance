@@ -6,7 +6,6 @@ import { KINDS, KIND_LABELS, REASONS, REASON_LABELS, isLowStock, parseMovementFo
 import { DEFAULT_WARN_DAYS, backfillAllocations, expiryStatus, lotBalances, unassignedRemovals } from "@/lib/lots";
 import { formatCents } from "@/lib/money";
 import { todayInChicago } from "@/lib/dates";
-import { Nav } from "@/components/Nav";
 import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
@@ -89,7 +88,6 @@ export default async function Item({ params, searchParams }: { params: Promise<{
   const badge: Record<string, string> = { expired: "expired", soon: "expires soon", ok: "", none: "" };
   return (
     <main>
-      <Nav />
       <p><Link href="/inventory">← Inventory</Link></p>
       <h1>{item.label}</h1>
       <p className="muted">{item.category} · counted in {item.unit}</p>

@@ -4,7 +4,6 @@ import { databaseReady, listTripsAll, addTrip, deleteTrip, getRules } from "@/li
 import { PURPOSES, PURPOSE_LABELS, formatMiles, mileageSummary, parseTripForm, type RateInfo } from "@/lib/mileage";
 import { formatCents } from "@/lib/money";
 import { periodRanges, todayInChicago } from "@/lib/dates";
-import { Nav } from "@/components/Nav";
 import { rowsToShow } from "@/lib/paging";
 import Link from "next/link";
 import { SubmitButton } from "@/components/SubmitButton";
@@ -44,7 +43,6 @@ export default async function Mileage({ searchParams }: { searchParams: Promise<
   const m = mileageSummary(trips, p.month, rates), y = mileageSummary(trips, p.year, rates);
   return (
     <main>
-      <Nav />
       <h1>Mileage</h1>
       <div className="note">One row per trip. No addresses or places are stored (a stop could be a patient&rsquo;s home). The deduction is an estimate: whether to use the standard mileage rate, and the rate itself, are for your tax preparer. If you use it, do not also enter actual vehicle costs as expenses.</div>
       {sp.saved && <div className="note">Saved.</div>}
@@ -66,19 +64,17 @@ export default async function Mileage({ searchParams }: { searchParams: Promise<
         <label htmlFor="oe">Odometer end (optional)</label><input id="oe" name="odometer_end" type="number" min={0} />
         <p><SubmitButton className="btn">Add trip</SubmitButton></p>
       </form>
-      <div className="card tablewrap">
+      <div className="card">
         <h2>This year ({trips.length})</h2>
         {trips.length === 0 ? <p className="muted">No trips yet.</p> : (
-          <table>
-            <thead><tr><th>Date</th><th>Purpose</th><th className="num">Miles</th><th>Odometer</th><th /></tr></thead>
-            <tbody>{trips.slice(0, shown).map((t) => (
-              <tr key={t.id}>
-                <td>{t.driven_on}</td><td>{PURPOSE_LABELS[t.purpose]}</td><td className="num">{formatMiles(t.miles_tenths)}</td>
-                <td>{t.odometer_start === null ? "" : `${t.odometer_start} to ${t.odometer_end}`}</td>
-                <td><form action={remove} className="inline"><input type="hidden" name="id" value={t.id} /><SubmitButton className="linkbtn">Delete</SubmitButton></form></td>
-              </tr>
-            ))}</tbody>
-          </table>
+          <ul className="entries">{trips.slice(0, shown).map((t) => (
+            <li className="entry" key={t.id}>
+              <span className="what">{PURPOSE_LABELS[t.purpose]}</span>
+              <span className="amt">{formatMiles(t.miles_tenths)} mi</span>
+              <span className="meta">{t.driven_on}{t.odometer_start === null ? "" : ` · odometer ${t.odometer_start} to ${t.odometer_end}`}</span>
+              <div className="acts"><form action={remove} className="inline"><input type="hidden" name="id" value={t.id} /><SubmitButton className="linkbtn">Delete</SubmitButton></form></div>
+            </li>
+          ))}</ul>
         )}
         {trips.length > shown && <p><Link href={`/mileage?rows=${shown + 200}`}>Show 200 more ({trips.length - shown} older)</Link></p>}
       </div>

@@ -33,7 +33,7 @@ test("an expense and its first photo save in one statement; whole-year lists are
 
 test("phone use: big tap targets, labelled file input, lists draw a limited number of rows, big downloads are refused cleanly", () => {
   const css = rd("src/app/globals.css");
-  assert.match(css, /input\[type=number\], input\[type=text\], input\[type=date\], select \{ min-height:44px; \}/); assert.match(css, /\.linkbtn \{ min-height:44px/);
+  assert.match(css, /input\[type=number\], input\[type=text\], input\[type=date\], select \{ min-height: ?44px; \}/); assert.match(css, /\.linkbtn \{ min-height: ?44px/); assert.match(css, /\.btn \{[^}]*min-height: ?44px/);
   assert.match(rd("src/components/ImportForm.tsx"), /type="file"[^>]*aria-label=/);
   const P = require("../.testbuild/paging.js");
   assert.deepEqual([P.rowsToShow(undefined), P.rowsToShow("300"), P.rowsToShow("999999"), P.rowsToShow("abc"), P.rowsToShow("5")], [100, 300, 100, 100, 20]);

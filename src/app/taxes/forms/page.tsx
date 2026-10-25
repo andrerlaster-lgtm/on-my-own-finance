@@ -6,7 +6,6 @@ import { FORM_LABELS, FORM_TYPES, parseFormEntry, parsePayerForm } from "@/lib/t
 import { formatCents } from "@/lib/money";
 import { todayInChicago } from "@/lib/dates";
 import { parseYear } from "@/lib/taxRules";
-import { Nav } from "@/components/Nav";
 import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
@@ -49,7 +48,6 @@ export default async function FormsPage({ searchParams }: { searchParams: Promis
   const [forms, payers] = [await listForms(year), await listPayers()];
   return (
     <main>
-      <Nav />
       <p><Link href={`/taxes?year=${year}`}>← Taxes {year}</Link></p>
       <h1>1099 forms and payers</h1>
       <div className="note">Enter the amount printed on each form you receive. Payers are business names only: no tax IDs, no personal details.</div>

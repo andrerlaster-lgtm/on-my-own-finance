@@ -5,7 +5,6 @@ import { databaseReady, existingSquareIds, importSquareRows } from "@/lib/db";
 import { buildPreview, parsePayload, parseSquareCsv, serializePayload } from "@/lib/squareImport";
 import { LIMITS } from "@/lib/squareFormat";
 import { ImportForm, type PreviewState } from "@/components/ImportForm";
-import { Nav } from "@/components/Nav";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +36,6 @@ export default async function ImportPage({ searchParams }: { searchParams: Promi
   const done = /^\d{1,6}$/.test(sp.added ?? "") && /^\d{1,6}$/.test(sp.dupes ?? "");
   return (
     <main>
-      <Nav />
       <p><Link href="/income">← Income</Link></p>
       <h1>Import Square transactions</h1>
       <div className="note">Export Transactions as CSV from Square. Only dates, amounts, status and payment IDs are read. Names, descriptions, card details and every other column are ignored and never saved, and the file itself is not kept.</div>
