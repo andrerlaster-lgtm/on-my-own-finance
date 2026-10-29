@@ -1,7 +1,7 @@
 import { toCsv } from "./csv";
 import { CATEGORY_LABELS, estimateProfit, summarizeExpenses, type Expense } from "./expenses";
 import { SOURCE_LABELS, TAX_FORMS, summarize, type IncomeEntry } from "./income";
-import { mileageSummary, PURPOSE_LABELS, type Trip } from "./mileage";
+import { isBusiness, mileageSummary, PURPOSE_LABELS, type Trip } from "./mileage";
 import { needsConfirmation, type TaxYearRules } from "./taxRules";
 import { FORM_LABELS, reconcile, setAside, thresholdProgress, type FormEntry, type Payer, type Payment, type ReconRow, type SetAside, type Unformed } from "./taxforms";
 import type { Report } from "./lots";
@@ -62,7 +62,7 @@ function groupBy(entries: readonly IncomeEntry[], keyOf: (e: IncomeEntry) => [st
 export function buildPacket(i: PacketInput): Packet {
   const y = `${i.year}-`, range = { from: `${i.year}-01-01`, to: `${i.year}-12-31` };
   const income = i.income.filter((e) => e.occurred_on.startsWith(y)), expenses = i.expenses.filter((e) => e.spent_on.startsWith(y));
-  const trips = i.trips.filter((t) => t.driven_on.startsWith(y)), payments = i.payments.filter((p) => p.tax_year === i.year);
+  const trips = i.trips.filter((t) => t.driven_on.startsWith(y) && isBusiness(t)), payments = i.payments.filter((p) => p.tax_year === i.year);
   const payerLabel = (id: number | null) => (id === null ? "No payer chosen" : i.payers.find((p) => p.id === id)?.label ?? `Payer ${id}`);
   const formLabel = (id: string) => TAX_FORMS.find((t) => t.id === id)?.label.split(" (")[0] ?? id;
 

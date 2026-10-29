@@ -1,8 +1,9 @@
 import { ownerOrNull } from "@/lib/auth";
 import { databaseReady } from "@/lib/db";
 import { loadLedgerInput } from "@/lib/accountingDb";
+import { loadMileageData } from "@/lib/accountingPage";
 import { buildLedger } from "@/lib/ledger";
-import { buildReport, REPORT_IDS } from "@/lib/reports";
+import { buildReport, MILEAGE_REPORT_IDS, REPORT_IDS } from "@/lib/reports";
 import { reportToXlsx } from "@/lib/xlsx";
 import { reportToPdf } from "@/lib/pdfdoc";
 import { todayInChicago } from "@/lib/dates";
@@ -20,7 +21,7 @@ export async function GET(req: Request) {
   if (format !== "xlsx" && format !== "pdf") return text("Unknown format", 400);
   const params = Object.fromEntries(q.entries());
   const input = await loadLedgerInput(), today = todayInChicago();
-  const doc = buildReport(id, buildLedger(input), input.accounts, params, today);
+  const doc = buildReport(id, buildLedger(input), input.accounts, params, today, MILEAGE_REPORT_IDS.includes(id) ? await loadMileageData(today) : undefined);
   if (!doc) return text("Unknown report", 400);
   const name = `on-my-own-finance-${id}-${(doc.subtitle || today).replace(/[^0-9A-Za-z]+/g, "-").replace(/^-|-$/g, "")}`;
   const body = format === "xlsx" ? reportToXlsx(doc) : reportToPdf(doc, today);

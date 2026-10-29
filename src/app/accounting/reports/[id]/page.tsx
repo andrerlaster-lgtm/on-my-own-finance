@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireOwner } from "@/lib/auth";
-import { loadBooks, flatParams } from "@/lib/accountingPage";
-import { buildReport, REPORT_IDS } from "@/lib/reports";
+import { loadBooks, loadMileageData, flatParams } from "@/lib/accountingPage";
+import { buildReport, MILEAGE_REPORT_IDS, REPORT_IDS } from "@/lib/reports";
 import { todayInChicago } from "@/lib/dates";
 import { PeriodForm } from "@/components/accounting/PeriodForm";
 import { ReportView } from "@/components/accounting/ReportView";
@@ -15,7 +15,7 @@ export default async function ReportPage({ params, searchParams }: { params: Pro
   const p = flatParams(await searchParams), today = todayInChicago();
   await requireOwner();
   const { accounts, ledger } = await loadBooks();
-  const doc = buildReport(id, ledger, accounts, p, today);
+  const doc = buildReport(id, ledger, accounts, p, today, MILEAGE_REPORT_IDS.includes(id) ? await loadMileageData(today) : undefined);
   if (!doc) notFound();
   const exportable = REPORT_IDS.includes(id);
   const qs = new URLSearchParams(Object.entries(p).filter(([, v]) => v !== undefined) as [string, string][]);

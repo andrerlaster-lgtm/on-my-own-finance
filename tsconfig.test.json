@@ -34,6 +34,8 @@
     "src/lib/ledger.ts",
     "src/lib/statements.ts",
     "src/lib/reports.ts",
+    "src/lib/routing.ts",
+    "src/lib/mileageReports.ts",
     "src/lib/journalForms.ts",
     "src/lib/xlsx.ts",
     "src/lib/pdfdoc.ts"

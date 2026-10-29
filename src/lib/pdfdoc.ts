@@ -33,9 +33,9 @@ export function reportToPdf(doc: ReportDoc, generated: string): Uint8Array {
       const bold = row.kind === "section" || row.kind === "subtotal" || row.kind === "total";
       if (row.kind === "total") { rule(y + LH - 3); }
       row.cells.forEach((c, i) => {
-        const s = c.amount !== undefined ? fmtAmount(c.amount) : c.percent !== undefined ? fmtPercent(c.percent) : c.text;
+        const s = c.miles !== undefined ? (c.miles / 10).toFixed(1) : c.amount !== undefined ? fmtAmount(c.amount) : c.percent !== undefined ? fmtPercent(c.percent) : c.text;
         if (i === 0) text(M + (row.indent ?? 0) * 12, y, s.slice(0, labelChars - (row.indent ?? 0) * 2), bold || c.bold ? "F2" : "F1");
-        else rightText(M + labelW + numW * i, y, s, "F3");
+        else rightText(M + labelW + numW * i, y, s.slice(0, Math.floor(numW / 5.4)), "F3");
       });
       y -= LH;
     }

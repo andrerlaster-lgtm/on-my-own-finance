@@ -29,6 +29,8 @@ export default async function Tools() {
         <p className="muted">Square processing fees are saved on each imported payment, so do not enter them again as expenses. Supply purchases belong in Supplies, not Expenses.</p></div>
       <div className="card"><h2>Journal entries</h2>
         <p className="muted">Manual entries (contributions, draws, payouts, adjustments) are on the Transactions page. They must balance, cannot be edited or deleted, and are corrected by reversal. Every change is also written to the Activity log.</p></div>
+      <div className="card"><h2>Mileage</h2>
+        <p className="muted">The mileage deduction is an estimate (business miles × the standard rate for the tax year). It is not posted to the ledger and is never an operating expense, so it cannot be counted twice. Reports are under Financial Reports; trips are entered on the Mileage page. Keep actual vehicle costs out of Expenses if the standard rate is used.</p></div>
       <div className="card"><h2>What comes next</h2>
         <ul className="entries">{ROADMAP.map((r) => <li className="entry" key={r.title}><span className="what">{r.title}</span><span className="meta">{r.status}</span><span className="meta">{r.text}</span></li>)}
           {NOT_YET_AVAILABLE.map((r) => <li className="entry" key={r.id}><span className="what">{r.title}</span><span className="meta">Not available yet</span><span className="meta">{r.why}</span></li>)}</ul></div>

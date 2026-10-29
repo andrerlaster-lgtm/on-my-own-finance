@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { fmtAmount, fmtPercent, type Cell, type ReportDoc } from "@/lib/statements";
 
-const show = (c: Cell): string => (c.amount !== undefined ? fmtAmount(c.amount) : c.percent !== undefined ? fmtPercent(c.percent) : c.text);
+const show = (c: Cell): string => (c.miles !== undefined ? (c.miles / 10).toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : c.amount !== undefined ? fmtAmount(c.amount) : c.percent !== undefined ? fmtPercent(c.percent) : c.text);
 
 /** A statement laid out the way it is read: indented accounts, ruled subtotals, figures in columns. Amounts with a link open the transactions behind them. */
 export function ReportView({ doc }: { doc: ReportDoc }) {
