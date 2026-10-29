@@ -40,6 +40,32 @@ Not tax advice. Your tax preparer decides how each item is treated.
 - **Packet and readiness list:** the Taxes page lists what still needs attention (unconfirmed rules, entries with no tax form, expenses without receipts, expired inventory, flagged refunds, form mismatches) and offers one CSV per section. **Snapshots** freeze the packet so later edits don't change what you sent.
 - **Set the tax form on imports:** fills in "not decided" Square entries of one year after a preview and confirmation; it never overwrites a choice you made.
 
+## Accounting area (Phase 6): chart of accounts, ledger and statements
+
+Everything lives under **Accounting** (Dashboard, Transactions, Chart of Accounts, General Ledger, Inventory & Cost of Services, Financial Reports, Accounting Tools). It is **cash basis only**: income counts when received, expenses when paid. Accrual reporting is not offered.
+
+**How it works.** Your own records stay the single source of truth. The ledger is calculated from them every time a page opens, as balanced journal entries, so nothing is copied and nothing can drift or be counted twice. Only manual entries are stored (`journal_entries`, `journal_lines`).
+
+| Record | Posts as |
+|---|---|
+| Income (Square or manual) | Dr Square balance (or Cash) for revenue + tip - fee; Dr Payment processing fees (fee, once); Cr Service revenue; Cr Tips received (7010, other income, never inside revenue) |
+| Expense | Dr the account for its category (or the account you pick on that entry); Cr Cash and bank |
+| Supply purchase / opening stock | Dr Inventory (asset); Cr Cash / Opening balance equity. Not an expense |
+| Supplies used | Dr Medical supplies consumed (or the item's cost account); Cr Inventory, at weighted-average cost. Cost of services |
+| Count adjustments, expired stock | Inventory vs Inventory write-offs (5060) |
+| Estimated tax payment | Dr Owner draws; Cr Cash. Personal, not a business expense |
+| Owner contribution / draw, Square payout | Manual entries on the Transactions page (equity and transfers, never income or expense) |
+
+Not posted: mileage (a tax-deduction estimate, not money spent) and refunds flagged at Square import (not saved as income).
+
+**Chart of accounts.** Conventional numbering (1000 assets, 2000 liabilities, 3000 equity, 4000 revenue, 5000 cost of services, 6000 operating expenses, 7000 other). Add, rename, renumber or deactivate accounts; never delete. Accounts used by automatic postings can be renamed but not deactivated or moved to another type. An account with history cannot change type. Seeded once when the table is empty.
+
+**Journal entries.** Must have at least two lines, each on one side only, in whole cents, with debits equal to credits. Enforced in the app and again in the database statement that saves them, so an unbalanced or half-saved entry cannot exist. Entries are never edited or deleted: correct one by posting a reversal (each can be reversed once). Every change is also written to the Activity log.
+
+**Reports.** Income Statement (with previous period, year to date, variance $ and %), Cost of Services, General Ledger, Trial Balance, Expense Detail, Revenue by Service, Monthly Profitability Comparison and Monthly Financial Overview. Month, quarter, year or custom range. Amounts link to the transactions behind them. Print, PDF and Excel use the same report definition as the screen. **Balance Sheet and Cash Flow are intentionally not produced**: they need opening bank and Square balances and payout records, and are listed as not available yet instead of showing guessed numbers.
+
+**Integrity checks** (Accounting Tools) re-run on all history: every entry balances, no duplicate entries, revenue, tips, fees and expenses in the ledger equal the source records, and the Inventory account equals the inventory report. Warnings flag an expense that looks like a supply purchase already recorded in Supplies, or one that mentions Square fees.
+
 ## Reliability and limits (Phase 5)
 - Whole-year totals are always computed from every row of the year; if a view ever had more than 50,000 rows it stops with an error instead of showing totals that are silently incomplete.
 - Lists on the Income, Expenses and Mileage pages draw 100 rows at a time ("Show more"); the totals above them still cover everything.

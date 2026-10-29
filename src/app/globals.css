@@ -128,8 +128,27 @@ input[type=number], input[type=text], input[type=date], select { min-height: 44p
 input[type=file] { max-width: 100%; min-height: 44px; }
 .linkbtn { min-height: 44px; padding: 10px 6px; }
 
+/* ---------- accounting: tabs, statements ---------- */
+.acct-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+.acct-tabs a { padding: 8px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--paper); color: var(--ink); text-decoration: none; font-size: .9rem; min-height: 40px; display: inline-flex; align-items: center; }
+.acct-tabs a[aria-current="page"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+.period-form label { display: flex; flex-direction: column; gap: 4px; font-weight: 500; font-size: .86rem; } .period-form .row { align-items: flex-end; }
+.period-form label.check { flex-direction: row; align-items: center; }
+.chip { padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; font-size: .86rem; text-decoration: none; color: var(--ink); } .chip.on { background: var(--chip); font-weight: 600; }
+.statement { background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 16px; margin: 0 0 16px; }
+.stmt-head { text-align: center; margin-bottom: 12px; } .stmt-head h2 { margin: 0 0 2px; }
+table.stmt { font-variant-numeric: tabular-nums; }
+table.stmt td, table.stmt th { padding: 6px 8px; }
+table.stmt tr.k-section td { font-weight: 700; padding-top: 14px; border-bottom: 0; }
+table.stmt tr.k-subtotal td { font-weight: 600; border-top: 1px solid var(--ink); }
+table.stmt tr.k-total td { font-weight: 700; border-top: 1px solid var(--ink); border-bottom: 3px double var(--ink); }
+table.stmt tr.blank td { padding: 4px; border-bottom: 0; }
+table.stmt a { color: inherit; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+.stmt-notes { font-size: .82rem; margin: 12px 0 0; padding-left: 18px; }
+.checks { list-style: none; padding: 0; } .checks li { padding: 6px 0; border-bottom: 1px solid var(--line); }
+
 /* printing a page for your preparer: no navigation or buttons */
 @media print {
-  body { background: #fff; } .topbar, .tabbar, .btn, .linkbtn, form { display: none !important; }
+  body { background: #fff; } .topbar, .tabbar, .btn, .linkbtn, form, .acct-tabs, .noprint { display: none !important; }
   main { max-width: none; padding: 0; } .card { box-shadow: none; break-inside: avoid; }
 }

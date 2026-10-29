@@ -29,3 +29,10 @@ Nothing here has been done yet. Do it in this order, and stop at any step that d
 - [ ] Monthly and before year-end: `npm run backup` to an encrypted disk, then `npm run verify-backup`.
 - [ ] Glance at Activity now and then for anything you did not do.
 - [ ] Review Dependabot pull requests when they appear; CI must be green before merging.
+
+## Accounting area (schema version 7)
+- Press **Set up database** once after merging. It only adds tables (chart of accounts, classifications, journal). Nothing existing is changed.
+- Open **Accounting > Chart of Accounts**: the standard chart is created the first time it is opened.
+- Check **Accounting > Accounting Tools**: every integrity check should show a tick before you rely on any report.
+- Have your preparer review the account mapping (tips, owner draws, supplies) before using the statements for filing.
+

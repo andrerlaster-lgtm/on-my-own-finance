@@ -29,7 +29,14 @@
     "src/lib/csp.ts",
     "src/lib/env.ts",
     "src/lib/activity.ts",
-    "src/lib/paging.ts"
+    "src/lib/paging.ts",
+    "src/lib/accounts.ts",
+    "src/lib/ledger.ts",
+    "src/lib/statements.ts",
+    "src/lib/reports.ts",
+    "src/lib/journalForms.ts",
+    "src/lib/xlsx.ts",
+    "src/lib/pdfdoc.ts"
   ],
   "exclude": [
     "node_modules"

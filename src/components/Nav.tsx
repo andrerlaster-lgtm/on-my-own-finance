@@ -12,7 +12,7 @@ const PRIMARY = [
   { href: "/inventory", label: "Supplies", icon: I("M21 8l-9-5-9 5v8l9 5 9-5zM3 8l9 5 9-5M12 13v8") },
   { href: "/taxes", label: "Taxes", icon: I("M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8zM14 3v5h5M9 13h6M9 17h6") },
 ];
-const MORE = [{ href: "/mileage", label: "Mileage" }, { href: "/settings", label: "Tax rules" }, { href: "/activity", label: "Activity" }];
+const MORE = [{ href: "/accounting", label: "Accounting" }, { href: "/mileage", label: "Mileage" }, { href: "/settings", label: "Tax rules" }, { href: "/activity", label: "Activity" }];
 
 const here = (path: string, href: string) => (href === "/" ? path === "/" : path === href || path.startsWith(href + "/"));
 
