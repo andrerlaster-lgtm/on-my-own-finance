@@ -1,9 +1,9 @@
 /*
- * Database schema (version 6). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS, ADD COLUMN IF NOT EXISTS and
+ * Database schema (version 7). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS, ADD COLUMN IF NOT EXISTS and
  * ON CONFLICT only. Nothing here drops or rewrites data. Privacy rule: no column may hold a client or patient's name,
  * contact details, birth date or health information (tests/schema.test.cjs checks the column names).
  */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 export const schemaStatements: string[] = [
   `CREATE TABLE IF NOT EXISTS app_meta (
@@ -173,13 +173,62 @@ export const schemaStatements: string[] = [
   // ---- version 6: an optional second mileage rate for trips from July 1 (the IRS changed the 2026 business rate mid-year). ----
   `ALTER TABLE tax_year_rules ADD COLUMN IF NOT EXISTS mileage_rate_h2_cents numeric(6,2) CHECK (mileage_rate_h2_cents IS NULL OR (mileage_rate_h2_cents >= 0 AND mileage_rate_h2_cents <= 500))`,
   `ALTER TABLE tax_year_rules ADD COLUMN IF NOT EXISTS mileage_rate_h2_confirmed boolean NOT NULL DEFAULT false`,
+  // ---- version 7: chart of accounts and journal. Reports are calculated from your income, expenses and inventory records; only manual entries are stored as journal rows. ----
+  `CREATE TABLE IF NOT EXISTS accounts (
+     id         bigserial PRIMARY KEY,
+     number     integer NOT NULL UNIQUE CHECK (number BETWEEN 1000 AND 7999),
+     label      text NOT NULL CHECK (char_length(label) BETWEEN 1 AND 60),
+     type       text NOT NULL CHECK (type IN ('asset', 'liability', 'equity', 'revenue', 'cost_of_services', 'operating_expense', 'other')),
+     normal     text NOT NULL CHECK (normal IN ('debit', 'credit')),
+     system_key text UNIQUE,
+     active     boolean NOT NULL DEFAULT true,
+     created_at timestamptz NOT NULL DEFAULT now()
+   )`,
+  // The starting chart is seeded by the app (seedAccounts in accountingDb.ts), once and only while the table is empty.
+  `CREATE TABLE IF NOT EXISTS expense_category_accounts (
+     id         bigserial PRIMARY KEY,
+     category   text NOT NULL UNIQUE,
+     account_id bigint NOT NULL REFERENCES accounts(id)
+   )`,
+  `CREATE TABLE IF NOT EXISTS expense_accounts (
+     id         bigserial PRIMARY KEY,
+     expense_id bigint NOT NULL UNIQUE,
+     account_id bigint NOT NULL REFERENCES accounts(id)
+   )`,
+  `CREATE TABLE IF NOT EXISTS income_accounts (
+     id         bigserial PRIMARY KEY,
+     income_id  bigint NOT NULL UNIQUE,
+     account_id bigint NOT NULL REFERENCES accounts(id)
+   )`,
+  `CREATE TABLE IF NOT EXISTS inventory_item_accounts (
+     id         bigserial PRIMARY KEY,
+     item_id    bigint NOT NULL UNIQUE REFERENCES inventory_items(id),
+     account_id bigint NOT NULL REFERENCES accounts(id)
+   )`,
+  `CREATE TABLE IF NOT EXISTS journal_entries (
+     id          bigserial PRIMARY KEY,
+     entry_date  date NOT NULL,
+     kind        text NOT NULL CHECK (kind IN ('owner_contribution', 'owner_draw', 'transfer', 'opening_balance', 'manual', 'adjusting', 'reversal')),
+     description text NOT NULL CHECK (char_length(description) BETWEEN 1 AND 120),
+     reverses_id bigint REFERENCES journal_entries(id),
+     created_at  timestamptz NOT NULL DEFAULT now()
+   )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS journal_entries_one_reversal ON journal_entries (reverses_id) WHERE reverses_id IS NOT NULL`,
+  `CREATE TABLE IF NOT EXISTS journal_lines (
+     id           bigserial PRIMARY KEY,
+     entry_id     bigint NOT NULL REFERENCES journal_entries(id),
+     account_id   bigint NOT NULL REFERENCES accounts(id),
+     debit_cents  bigint NOT NULL DEFAULT 0 CHECK (debit_cents >= 0 AND debit_cents <= 99999999999),
+     credit_cents bigint NOT NULL DEFAULT 0 CHECK (credit_cents >= 0 AND credit_cents <= 99999999999),
+     CHECK ((debit_cents > 0) <> (credit_cents > 0))
+   )`,
   `INSERT INTO app_meta (key, value) VALUES ('schema_version', '${SCHEMA_VERSION}')
    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now() WHERE app_meta.value::int < EXCLUDED.value::int`,
 ];
 
 /** Tables included in the full export, in order. */
-export const EXPORT_TABLES = ["app_meta", "tax_year_rules", "audit_log", "import_batches", "income_entries", "inventory_items", "inventory_movements", "expenses", "expense_receipts", "mileage_trips", "inventory_lot_uses", "inventory_settings", "payers", "income_entry_payers", "form_1099_entries", "tax_payments", "tax_snapshots"] as const;
+export const EXPORT_TABLES = ["app_meta", "tax_year_rules", "audit_log", "import_batches", "income_entries", "inventory_items", "inventory_movements", "expenses", "expense_receipts", "mileage_trips", "inventory_lot_uses", "inventory_settings", "payers", "income_entry_payers", "form_1099_entries", "tax_payments", "tax_snapshots", "accounts", "expense_category_accounts", "expense_accounts", "income_accounts", "inventory_item_accounts", "journal_entries", "journal_lines"] as const;
 export type ExportTable = (typeof EXPORT_TABLES)[number];
 
 /** Column each exported table is sorted by (every other table has an id column). */
-export const EXPORT_ORDER: Record<string, string> = { app_meta: "key", tax_year_rules: "tax_year", inventory_settings: "item_id", income_entry_payers: "income_id" };
+export const EXPORT_ORDER: Record<string, string> = { app_meta: "key", tax_year_rules: "tax_year", inventory_settings: "item_id", income_entry_payers: "income_id", expense_category_accounts: "category" };

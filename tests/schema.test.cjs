@@ -19,8 +19,13 @@ test("export lists only tables that exist in the schema", () => {
   for (const t of S.EXPORT_TABLES) assert.match(S.schemaStatements.join("\n"), new RegExp(`CREATE TABLE IF NOT EXISTS ${t}\\b`));
 });
 
+test("version 7 adds only new accounting tables, seeds the chart once and never touches existing tables", () => {
+  assert.equal(S.SCHEMA_VERSION, 7);
+  const v7 = S.schemaStatements.join("\n");
+  for (const t of ["accounts", "expense_category_accounts", "expense_accounts", "income_accounts", "inventory_item_accounts", "journal_entries", "journal_lines"]) { assert.match(v7, new RegExp(`CREATE TABLE IF NOT EXISTS ${t}\\b`)); assert.ok(S.EXPORT_TABLES.includes(t), `${t} is in the export`); }
+});
 test("version 6 only adds the optional July 1 mileage rate columns", () => {
-  assert.equal(S.SCHEMA_VERSION, 6);
+  assert.ok(S.SCHEMA_VERSION >= 6);
   const v6 = S.schemaStatements.filter((s) => /mileage_rate_h2/.test(s));
   assert.equal(v6.length, 2);
   for (const s of v6) assert.match(s, /^ALTER TABLE tax_year_rules ADD COLUMN IF NOT EXISTS/);
