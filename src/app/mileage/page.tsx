@@ -39,7 +39,7 @@ export default async function Mileage({ searchParams }: { searchParams: Promise<
   const trips = await listTripsAll(p.year.from, p.year.to);
   const rules = await getRules(year);
   const shown = rowsToShow(sp.rows);
-  const rates: Record<number, RateInfo> = { [year]: { centsPerMile: rules.mileage_rate_cents, confirmed: rules.mileage_rate_confirmed } };
+  const rates: Record<number, RateInfo> = { [year]: { centsPerMile: rules.mileage_rate_cents, confirmed: rules.mileage_rate_confirmed, h2CentsPerMile: rules.mileage_rate_h2_cents, h2Confirmed: rules.mileage_rate_h2_confirmed } };
   const m = mileageSummary(trips, p.month, rates), y = mileageSummary(trips, p.year, rates);
   return (
     <main>

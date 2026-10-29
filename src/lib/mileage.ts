@@ -47,19 +47,28 @@ export function parseTripForm(f: Record<string, string | undefined>): { ok: true
   return { ok: true, value: { driven_on: driven_on!, miles_tenths: miles!, purpose, odometer_start, odometer_end } };
 }
 
-export interface RateInfo { centsPerMile: number | null; confirmed: boolean }
+/** h2 = an optional second rate for trips dated July 1 or later (the IRS changed the 2026 business rate mid-year). */
+export interface RateInfo { centsPerMile: number | null; confirmed: boolean; h2CentsPerMile?: number | null; h2Confirmed?: boolean }
+
+/** The rate that applies to a trip on this date: the July 1 rate when one is set, otherwise the year's rate. */
+export function rateForDate(r: RateInfo, date: string): { cents: number | null; confirmed: boolean } {
+  const month = Number(date.slice(5, 7));
+  if (month >= 7 && r.h2CentsPerMile !== undefined && r.h2CentsPerMile !== null) return { cents: r.h2CentsPerMile, confirmed: Boolean(r.h2Confirmed) };
+  return { cents: r.centsPerMile, confirmed: r.confirmed };
+}
 export interface MileageSummary { miles_tenths: number; trips: number; deductionCents: number; ratesMissing: boolean; unconfirmed: boolean }
 
-/** Deduction per trip uses the rate of that trip's own tax year. Trips in a year with no rate add miles but no dollars, and set ratesMissing. */
+/** Deduction per trip uses the rate of that trip's own tax year (and its July 1 rate, when set, for trips from July 1). Trips in a year with no rate add miles but no dollars, and set ratesMissing. */
 export function mileageSummary(trips: readonly Trip[], range: Range, rates: Record<number, RateInfo>): MileageSummary {
   const s: MileageSummary = { miles_tenths: 0, trips: 0, deductionCents: 0, ratesMissing: false, unconfirmed: false };
   for (const t of trips) {
     if (t.driven_on < range.from || t.driven_on > range.to) continue;
     s.miles_tenths += t.miles_tenths; s.trips++;
     const r = rates[Number(t.driven_on.slice(0, 4))];
-    if (!r || r.centsPerMile === null) { s.ratesMissing = true; continue; }
-    if (!r.confirmed) s.unconfirmed = true;
-    s.deductionCents += Math.round((t.miles_tenths * r.centsPerMile) / 10);
+    const used = r ? rateForDate(r, t.driven_on) : null;
+    if (!used || used.cents === null) { s.ratesMissing = true; continue; }
+    if (!used.confirmed) s.unconfirmed = true;
+    s.deductionCents += Math.round((t.miles_tenths * used.cents) / 10);
   }
   return s;
 }

@@ -60,3 +60,23 @@ test("schema v3 tables: additive, no place or person columns, receipts capped an
   assert.match(sql, /content_type = 'image\/jpeg'/); assert.match(sql, /octet_length\(data\) BETWEEN 1 AND 1500000/);
   assert.doesNotMatch(sql, /'(square_fees|processing_fees)'/, "no processor-fee expense category");
 });
+
+test("mid-year mileage rate: trips from July 1 use the July 1 rate, earlier trips the year's rate", () => {
+  const M = require("../.testbuild/mileage.js");
+  const trip = (id, d, tenths) => ({ id, driven_on: d, miles_tenths: tenths, purpose: "patient_visits", odometer_start: null, odometer_end: null });
+  const trips = [trip(1, "2026-06-30", 1000), trip(2, "2026-07-01", 1000), trip(3, "2026-12-31", 500)];
+  const range = { from: "2026-01-01", to: "2026-12-31" };
+  const both = M.mileageSummary(trips, range, { 2026: { centsPerMile: 72.5, confirmed: true, h2CentsPerMile: 76, h2Confirmed: true } });
+  // 100 mi x 72.5c = 7250; 100 mi x 76c = 7600; 50 mi x 76c = 3800
+  assert.equal(both.deductionCents, 7250 + 7600 + 3800);
+  assert.equal(both.unconfirmed, false);
+  const one = M.mileageSummary(trips, range, { 2026: { centsPerMile: 72.5, confirmed: true } });
+  assert.equal(one.deductionCents, Math.round(250 * 72.5), "no July 1 rate = one rate for the whole year");
+  const firstHalf = M.mileageSummary(trips, { from: "2026-01-01", to: "2026-06-30" }, { 2026: { centsPerMile: 72.5, confirmed: true, h2CentsPerMile: 76, h2Confirmed: false } });
+  assert.equal(firstHalf.unconfirmed, false, "an unconfirmed July 1 rate only matters if a July trip is in the period");
+  const second = M.mileageSummary(trips, { from: "2026-07-01", to: "2026-12-31" }, { 2026: { centsPerMile: 72.5, confirmed: true, h2CentsPerMile: 76, h2Confirmed: false } });
+  assert.equal(second.unconfirmed, true);
+  const missing = M.mileageSummary(trips, range, { 2026: { centsPerMile: null, confirmed: false, h2CentsPerMile: 76, h2Confirmed: true } });
+  assert.equal(missing.ratesMissing, true, "June trip has no rate");
+  assert.equal(missing.deductionCents, 7600 + 3800);
+});

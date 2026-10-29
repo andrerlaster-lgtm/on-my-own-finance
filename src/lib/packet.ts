@@ -20,7 +20,7 @@ export interface Packet {
   year: number;
   receipts: { total: Group; bySource: Group[]; byForm: Group[]; byPayer: Group[] };
   expenses: { total: number; count: number; byCategory: { key: string; label: string; total: number; count: number; withReceipt: number; without: number }[] };
-  mileage: { miles_tenths: number; trips: number; centsPerMile: number | null; confirmed: boolean; deductionCents: number | null };
+  mileage: { miles_tenths: number; trips: number; centsPerMile: number | null; confirmed: boolean; centsPerMileH2?: number | null; confirmedH2?: boolean; deductionCents: number | null };
   inventory: { beginValue: number; purchasesValue: number; usedValue: number; writeOffValue: number; adjustmentsNet: number; endValue: number; problems: string[] };
   profit: { netAfterFees: number; expensesTotal: number; expenseCount: number; estimatedProfit: number | null };
   forms: { rows: ReconRow[]; unformed: Unformed[]; thresholdK: ReturnType<typeof thresholdProgress> & { receipts: number }; thresholdNec: ReturnType<typeof thresholdProgress> & { receipts: number } };
@@ -79,9 +79,9 @@ export function buildPacket(i: PacketInput): Packet {
     c.total += e.amount_cents; c.count++; (e.receipt_on_file || e.photos > 0 ? c.withReceipt++ : c.without++); catMap.set(e.category, c);
   }
 
-  const rate = { centsPerMile: i.rules.mileage_rate_cents, confirmed: i.rules.mileage_rate_confirmed };
+  const rate = { centsPerMile: i.rules.mileage_rate_cents, confirmed: i.rules.mileage_rate_confirmed, h2CentsPerMile: i.rules.mileage_rate_h2_cents, h2Confirmed: i.rules.mileage_rate_h2_confirmed };
   const mi = mileageSummary(trips, range, { [i.year]: rate });
-  const mileage = { miles_tenths: mi.miles_tenths, trips: mi.trips, centsPerMile: rate.centsPerMile, confirmed: rate.confirmed, deductionCents: rate.centsPerMile === null ? null : mi.deductionCents };
+  const mileage = { miles_tenths: mi.miles_tenths, trips: mi.trips, centsPerMile: rate.centsPerMile, confirmed: rate.confirmed, centsPerMileH2: rate.h2CentsPerMile, confirmedH2: rate.h2Confirmed, deductionCents: rate.centsPerMile === null ? null : mi.deductionCents };
 
   const t = i.inventory.totals;
   const inventory = { beginValue: t.beginValue, purchasesValue: t.purchaseValue + t.openingValue, usedValue: t.useValue, writeOffValue: t.writeOffValue, adjustmentsNet: t.adjUpValue - t.adjDownValue, endValue: t.endValue, problems: i.inventory.problems };
@@ -143,7 +143,7 @@ export function packetCsv(p: Packet, section: PacketSection): string {
         ["tax_year", p.year], ["revenue_cents (excludes tips and refunds)", p.receipts.total.revenue], ["tips_cents", p.receipts.total.tips], ["total_receipts_cents", p.receipts.total.receipts],
         ["processing_fees_cents", p.receipts.total.fees], ["net_after_processing_fees_cents", p.profit.netAfterFees], ["expenses_cents", p.profit.expensesTotal],
         ["estimated_profit_cents (before taxes and mileage deduction)", p.profit.estimatedProfit], ["miles", (p.mileage.miles_tenths / 10).toFixed(1)], ["mileage_rate_cents_per_mile", p.mileage.centsPerMile],
-        ["mileage_rate_confirmed", p.mileage.confirmed ? "yes" : "no"], ["mileage_deduction_estimate_cents", p.mileage.deductionCents],
+        ["mileage_rate_confirmed", p.mileage.confirmed ? "yes" : "no"], ["mileage_rate_from_july_1_cents_per_mile", p.mileage.centsPerMileH2 ?? null], ["mileage_rate_from_july_1_confirmed", p.mileage.confirmedH2 ? "yes" : "no"], ["mileage_deduction_estimate_cents", p.mileage.deductionCents],
         ["inventory_value_start_cents", p.inventory.beginValue], ["inventory_purchases_cents", p.inventory.purchasesValue], ["inventory_used_cents", p.inventory.usedValue],
         ["inventory_expired_writeoffs_cents", p.inventory.writeOffValue], ["inventory_value_end_cents", p.inventory.endValue],
         ["set_aside_percent", p.rules.set_aside_percent], ["set_aside_confirmed", p.rules.set_aside_confirmed ? "yes" : "no"], ["set_aside_estimate_cents", p.setAside.amountCents],
