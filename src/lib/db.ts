@@ -60,11 +60,13 @@ export async function getRules(year: number): Promise<TaxYearRules> {
   return {
     tax_year: year,
     mileage_rate_cents: toNum(r.mileage_rate_cents),
+    mileage_rate_h2_cents: toNum(r.mileage_rate_h2_cents),
     set_aside_percent: toNum(r.set_aside_percent),
     threshold_1099k_dollars: toNum(r.threshold_1099k_dollars),
     threshold_1099nec_dollars: toNum(r.threshold_1099nec_dollars),
     sales_tax: r.sales_tax,
     mileage_rate_confirmed: r.mileage_rate_confirmed,
+    mileage_rate_h2_confirmed: Boolean(r.mileage_rate_h2_confirmed),
     set_aside_confirmed: r.set_aside_confirmed,
     threshold_1099k_confirmed: r.threshold_1099k_confirmed,
     threshold_1099nec_confirmed: r.threshold_1099nec_confirmed,
@@ -73,17 +75,34 @@ export async function getRules(year: number): Promise<TaxYearRules> {
 }
 
 export async function saveRules(r: TaxYearRules): Promise<void> {
-  await sql()`
-    INSERT INTO tax_year_rules (tax_year, mileage_rate_cents, set_aside_percent, threshold_1099k_dollars, threshold_1099nec_dollars, sales_tax,
-      mileage_rate_confirmed, set_aside_confirmed, threshold_1099k_confirmed, threshold_1099nec_confirmed, sales_tax_confirmed, updated_at)
-    VALUES (${r.tax_year}, ${r.mileage_rate_cents}, ${r.set_aside_percent}, ${r.threshold_1099k_dollars}, ${r.threshold_1099nec_dollars}, ${r.sales_tax},
-      ${r.mileage_rate_confirmed}, ${r.set_aside_confirmed}, ${r.threshold_1099k_confirmed}, ${r.threshold_1099nec_confirmed}, ${r.sales_tax_confirmed}, now())
-    ON CONFLICT (tax_year) DO UPDATE SET
-      mileage_rate_cents = EXCLUDED.mileage_rate_cents, set_aside_percent = EXCLUDED.set_aside_percent,
-      threshold_1099k_dollars = EXCLUDED.threshold_1099k_dollars, threshold_1099nec_dollars = EXCLUDED.threshold_1099nec_dollars,
-      sales_tax = EXCLUDED.sales_tax, mileage_rate_confirmed = EXCLUDED.mileage_rate_confirmed, set_aside_confirmed = EXCLUDED.set_aside_confirmed,
-      threshold_1099k_confirmed = EXCLUDED.threshold_1099k_confirmed, threshold_1099nec_confirmed = EXCLUDED.threshold_1099nec_confirmed,
-      sales_tax_confirmed = EXCLUDED.sales_tax_confirmed, updated_at = now()`;
+  // The July 1 mileage rate columns arrive with schema version 6. Until the database is updated, save everything else as before.
+  const v = (await schemaVersion()) ?? 0;
+  if (v >= 6) {
+    await sql()`
+      INSERT INTO tax_year_rules (tax_year, mileage_rate_cents, mileage_rate_h2_cents, set_aside_percent, threshold_1099k_dollars, threshold_1099nec_dollars, sales_tax,
+        mileage_rate_confirmed, mileage_rate_h2_confirmed, set_aside_confirmed, threshold_1099k_confirmed, threshold_1099nec_confirmed, sales_tax_confirmed, updated_at)
+      VALUES (${r.tax_year}, ${r.mileage_rate_cents}, ${r.mileage_rate_h2_cents}, ${r.set_aside_percent}, ${r.threshold_1099k_dollars}, ${r.threshold_1099nec_dollars}, ${r.sales_tax},
+        ${r.mileage_rate_confirmed}, ${r.mileage_rate_h2_confirmed}, ${r.set_aside_confirmed}, ${r.threshold_1099k_confirmed}, ${r.threshold_1099nec_confirmed}, ${r.sales_tax_confirmed}, now())
+      ON CONFLICT (tax_year) DO UPDATE SET
+        mileage_rate_cents = EXCLUDED.mileage_rate_cents, mileage_rate_h2_cents = EXCLUDED.mileage_rate_h2_cents, set_aside_percent = EXCLUDED.set_aside_percent,
+        threshold_1099k_dollars = EXCLUDED.threshold_1099k_dollars, threshold_1099nec_dollars = EXCLUDED.threshold_1099nec_dollars,
+        sales_tax = EXCLUDED.sales_tax, mileage_rate_confirmed = EXCLUDED.mileage_rate_confirmed, mileage_rate_h2_confirmed = EXCLUDED.mileage_rate_h2_confirmed,
+        set_aside_confirmed = EXCLUDED.set_aside_confirmed, threshold_1099k_confirmed = EXCLUDED.threshold_1099k_confirmed,
+        threshold_1099nec_confirmed = EXCLUDED.threshold_1099nec_confirmed, sales_tax_confirmed = EXCLUDED.sales_tax_confirmed, updated_at = now()`;
+  } else {
+    if (r.mileage_rate_h2_cents !== null) throw new Error("The July 1 mileage rate needs the database update first (press Update on the home page).");
+    await sql()`
+      INSERT INTO tax_year_rules (tax_year, mileage_rate_cents, set_aside_percent, threshold_1099k_dollars, threshold_1099nec_dollars, sales_tax,
+        mileage_rate_confirmed, set_aside_confirmed, threshold_1099k_confirmed, threshold_1099nec_confirmed, sales_tax_confirmed, updated_at)
+      VALUES (${r.tax_year}, ${r.mileage_rate_cents}, ${r.set_aside_percent}, ${r.threshold_1099k_dollars}, ${r.threshold_1099nec_dollars}, ${r.sales_tax},
+        ${r.mileage_rate_confirmed}, ${r.set_aside_confirmed}, ${r.threshold_1099k_confirmed}, ${r.threshold_1099nec_confirmed}, ${r.sales_tax_confirmed}, now())
+      ON CONFLICT (tax_year) DO UPDATE SET
+        mileage_rate_cents = EXCLUDED.mileage_rate_cents, set_aside_percent = EXCLUDED.set_aside_percent,
+        threshold_1099k_dollars = EXCLUDED.threshold_1099k_dollars, threshold_1099nec_dollars = EXCLUDED.threshold_1099nec_dollars,
+        sales_tax = EXCLUDED.sales_tax, mileage_rate_confirmed = EXCLUDED.mileage_rate_confirmed, set_aside_confirmed = EXCLUDED.set_aside_confirmed,
+        threshold_1099k_confirmed = EXCLUDED.threshold_1099k_confirmed, threshold_1099nec_confirmed = EXCLUDED.threshold_1099nec_confirmed,
+        sales_tax_confirmed = EXCLUDED.sales_tax_confirmed, updated_at = now()`;
+  }
   await audit("save_tax_rules", { tax_year: r.tax_year });
 }
 

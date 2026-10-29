@@ -3,6 +3,7 @@
 Nothing here has been done yet. Do it in this order, and stop at any step that does not behave as described.
 
 ## Before connecting anything
+- [ ] After the 2026-rules update deploys, press **Update** on the home page once (database version 6 adds the July 1 mileage rate columns; nothing is removed or changed).
 - [ ] Your tax preparer has confirmed: expense categories, the mileage method and rate, the set-aside percent, how tips are treated, and how expired inventory write-offs and year-end inventory are handled.
 - [ ] You have the real Square export headers; `src/lib/squareFormat.ts` is updated and tested against a few made-up rows in that format. Sales-tax rows and partly refunded sales are decided.
 - [ ] Two-factor authentication is on for GitHub, Vercel and Neon.

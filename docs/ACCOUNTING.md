@@ -49,3 +49,10 @@ Not tax advice. Your tax preparer decides how each item is treated.
 
 ## Privacy
 No patient or customer names, contact details or health information are stored. Do not type them into any field.
+
+## Published tax-year figures (2026)
+
+- **Tax rules** (Settings) can fill in the figures the IRS and Congress published for a year, using "Fill in the empty fields". For 2026: business mileage 72.5 cents (miles driven January 1 to June 30) and 76 cents (July 1 to December 31, raised mid-year), 1099-K processor threshold $20,000 and more than 200 transactions, 1099-NEC threshold $2,000 (payments made after December 31, 2025).
+- It only fills **empty** fields, never changes a value you entered, and leaves every "confirmed with my tax preparer" box unchecked. The set-aside percent is not published; your preparer sets it.
+- **Mileage rate from July 1** is optional. When set, trips dated July 1 or later use it and earlier trips use the year's rate; the packet export shows both rates. Leave it empty for years with one rate.
+- These figures came from search results (IRS newsroom and tax-industry summaries), not from reading IRS.gov directly. Check them against irs.gov or with your preparer.

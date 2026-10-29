@@ -51,7 +51,7 @@ export default async function Home() {
   const low = allItems.filter((i) => isLowStock(i.stock.onHand, i.reorder_level));
   const expiring = v >= 4 ? expiryAlerts(allItems, movements as Movement[], lotUses as LotUse[], warn as Map<number, number>, today) : [];
   const rates: Record<number, RateInfo> = {};
-  years.forEach((y, i) => { const r = rateRules[i]; if (r) rates[y] = { centsPerMile: r.mileage_rate_cents, confirmed: r.mileage_rate_confirmed }; });
+  years.forEach((y, i) => { const r = rateRules[i]; if (r) rates[y] = { centsPerMile: r.mileage_rate_cents, confirmed: r.mileage_rate_confirmed, h2CentsPerMile: r.mileage_rate_h2_cents, h2Confirmed: r.mileage_rate_h2_confirmed }; });
   const cols = [["This week", periods.week], ["This month", periods.month], ["This year", periods.year]] as const;
   return (
     <main>

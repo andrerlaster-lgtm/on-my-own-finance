@@ -1,9 +1,9 @@
 /*
- * Database schema (version 5). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS and
+ * Database schema (version 6). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS, ADD COLUMN IF NOT EXISTS and
  * ON CONFLICT only. Nothing here drops or rewrites data. Privacy rule: no column may hold a client or patient's name,
  * contact details, birth date or health information (tests/schema.test.cjs checks the column names).
  */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 export const schemaStatements: string[] = [
   `CREATE TABLE IF NOT EXISTS app_meta (
@@ -170,6 +170,9 @@ export const schemaStatements: string[] = [
      created_at timestamptz NOT NULL DEFAULT now(),
      packet     jsonb NOT NULL
    )`,
+  // ---- version 6: an optional second mileage rate for trips from July 1 (the IRS changed the 2026 business rate mid-year). ----
+  `ALTER TABLE tax_year_rules ADD COLUMN IF NOT EXISTS mileage_rate_h2_cents numeric(6,2) CHECK (mileage_rate_h2_cents IS NULL OR (mileage_rate_h2_cents >= 0 AND mileage_rate_h2_cents <= 500))`,
+  `ALTER TABLE tax_year_rules ADD COLUMN IF NOT EXISTS mileage_rate_h2_confirmed boolean NOT NULL DEFAULT false`,
   `INSERT INTO app_meta (key, value) VALUES ('schema_version', '${SCHEMA_VERSION}')
    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now() WHERE app_meta.value::int < EXCLUDED.value::int`,
 ];
