@@ -80,3 +80,15 @@ test("mid-year mileage rate: trips from July 1 use the July 1 rate, earlier trip
   assert.equal(missing.ratesMissing, true, "June trip has no rate");
   assert.equal(missing.deductionCents, 7600 + 3800);
 });
+
+test("temporary trip stops: clean text only, kept short, erased with the trip", () => {
+  const M = require("../.testbuild/mileage.js");
+  const ok = M.parsePendingForm({ driven_on: "2026-10-29", start_text: "Home", end_text: "123 Main St, Austin", purpose: "patient_visits" });
+  assert.ok(ok.ok); assert.equal(ok.value.end_text, "123 Main St, Austin");
+  for (const bad of ["call 5125551234", "a@b.com", "x".repeat(121), "", "<script>"]) assert.equal(M.parsePendingForm({ driven_on: "2026-10-29", start_text: "Home", end_text: bad, purpose: "other" }).ok, false, bad);
+  assert.equal(M.parsePendingForm({ driven_on: "2026-13-01", start_text: "a", end_text: "b", purpose: "other" }).ok, false);
+  const fs = require("node:fs"), db = fs.readFileSync("src/lib/db.ts", "utf8");
+  assert.match(db, /WITH p AS \(DELETE FROM mileage_pending[\s\S]*INSERT INTO mileage_trips/, "finishing a trip erases the stops in the same statement");
+  assert.match(db, /expires_at > now\(\)/, "expired rows are never returned");
+  assert.doesNotMatch(db.slice(db.indexOf("export async function addPendingTrip"), db.indexOf("export async function deletePendingTrip")), /audit\("[^"]+", \{[^}]*(start_text|end_text)/, "stops never reach the activity log");
+});

@@ -72,3 +72,25 @@ export function mileageSummary(trips: readonly Trip[], range: Range, rates: Reco
   }
   return s;
 }
+
+/* ---- Temporary stops: typed while driving, kept until the end of the next day, then erased. Only used to work out the miles. ---- */
+export interface PendingTrip { id: number; driven_on: string; start_text: string; end_text: string; purpose: Purpose }
+
+/** A stop is free text (a street, a business, "home"), but never a long digit run (phone, card or ID numbers) or an email. */
+export function cleanStop(raw: string | undefined): string | null {
+  const v = (raw ?? "").trim().replace(/\s+/g, " ");
+  if (v.length < 1 || v.length > 120 || !/^[A-Za-z0-9 .,&'#/():;-]+$/.test(v) || /\d{6,}/.test(v.replace(/[ -]/g, ""))) return null;
+  return v;
+}
+
+export function parsePendingForm(f: Record<string, string | undefined>): { ok: true; value: Omit<PendingTrip, "id"> } | { ok: false; errors: string[] } {
+  const errors: string[] = [];
+  const driven_on = parseDate(f.driven_on), start_text = cleanStop(f.start_text), end_text = cleanStop(f.end_text);
+  const purpose = f.purpose as Purpose;
+  if (!driven_on) errors.push("Date: use a real date.");
+  if (!start_text) errors.push("Start: up to 120 characters (letters, numbers, spaces and . , & ' # / ( ) : ;). No phone numbers or long numbers.");
+  if (!end_text) errors.push("End: up to 120 characters (letters, numbers, spaces and . , & ' # / ( ) : ;). No phone numbers or long numbers.");
+  if (!PURPOSES.some((p) => p.id === purpose)) errors.push("Purpose: choose one.");
+  if (errors.length) return { ok: false, errors };
+  return { ok: true, value: { driven_on: driven_on!, start_text: start_text!, end_text: end_text!, purpose } };
+}
