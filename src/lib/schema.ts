@@ -1,9 +1,9 @@
 /*
- * Database schema (version 7). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS, ADD COLUMN IF NOT EXISTS and
+ * Database schema (version 8). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS, ADD COLUMN IF NOT EXISTS and
  * ON CONFLICT only. Nothing here drops or rewrites data. Privacy rule: no column may hold a client or patient's name,
  * contact details, birth date or health information (tests/schema.test.cjs checks the column names).
  */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 export const schemaStatements: string[] = [
   `CREATE TABLE IF NOT EXISTS app_meta (
@@ -221,6 +221,16 @@ export const schemaStatements: string[] = [
      debit_cents  bigint NOT NULL DEFAULT 0 CHECK (debit_cents >= 0 AND debit_cents <= 99999999999),
      credit_cents bigint NOT NULL DEFAULT 0 CHECK (credit_cents >= 0 AND credit_cents <= 99999999999),
      CHECK ((debit_cents > 0) <> (credit_cents > 0))
+   )`,
+  // ---- version 8: stops typed while driving, kept only until the end of the next day so the miles can be worked out. Never exported or backed up. ----
+  `CREATE TABLE IF NOT EXISTS mileage_pending (
+     id         bigserial PRIMARY KEY,
+     driven_on  date NOT NULL,
+     start_text text NOT NULL CHECK (char_length(start_text) BETWEEN 1 AND 120),
+     end_text   text NOT NULL CHECK (char_length(end_text) BETWEEN 1 AND 120),
+     purpose    text NOT NULL CHECK (purpose IN ('patient_visits', 'supply_run', 'lab_dropoff', 'admin_errand', 'other')),
+     created_at timestamptz NOT NULL DEFAULT now(),
+     expires_at timestamptz NOT NULL
    )`,
   `INSERT INTO app_meta (key, value) VALUES ('schema_version', '${SCHEMA_VERSION}')
    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now() WHERE app_meta.value::int < EXCLUDED.value::int`,

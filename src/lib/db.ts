@@ -2,7 +2,7 @@ import { neon } from "@neondatabase/serverless";
 import { EXPORT_ORDER, EXPORT_TABLES, schemaStatements, SCHEMA_VERSION, type ExportTable } from "./schema";
 import { emptyRules, type TaxYearRules } from "./taxRules";
 import type { Expense, ExpenseInput } from "./expenses";
-import type { Trip, TripInput } from "./mileage";
+import type { PendingTrip, Trip, TripInput } from "./mileage";
 import type { Counts, ImportRow } from "./squareImport";
 import type { IncomeEntry, IncomeInput, TaxForm } from "./income";
 import type { FormEntry, FormType, Payer, Payment, PaymentKind } from "./taxforms";
@@ -374,6 +374,33 @@ export async function addTrip(v: TripInput): Promise<void> {
 export async function deleteTrip(id: number): Promise<void> {
   const rows = await sql()`DELETE FROM mileage_trips WHERE id = ${id} RETURNING id`;
   if (rows.length) await audit("delete_trip", { id });
+}
+
+/* Temporary stops (mileage_pending): erased at the end of the next day. Every read erases expired rows first and never returns them. */
+export async function purgePendingTrips(): Promise<void> {
+  try { await sql()`DELETE FROM mileage_pending WHERE expires_at <= now()`; } catch { /* table not created yet */ }
+}
+export async function listPendingTrips(): Promise<PendingTrip[]> {
+  try {
+    await purgePendingTrips();
+    return (await sql()`SELECT id, to_char(driven_on, 'YYYY-MM-DD') AS driven_on, start_text, end_text, purpose FROM mileage_pending WHERE expires_at > now() ORDER BY driven_on DESC, id DESC`)
+      .map((r) => ({ id: Number(r.id), driven_on: r.driven_on as string, start_text: r.start_text as string, end_text: r.end_text as string, purpose: r.purpose as PendingTrip["purpose"] }));
+  } catch { return []; }
+}
+export async function addPendingTrip(v: Omit<PendingTrip, "id">): Promise<void> {
+  await sql()`INSERT INTO mileage_pending (driven_on, start_text, end_text, purpose, expires_at)
+              VALUES (${v.driven_on}::date, ${v.start_text}, ${v.end_text}, ${v.purpose}, (date_trunc('day', now() AT TIME ZONE 'America/Chicago') + interval '2 days') AT TIME ZONE 'America/Chicago')`;
+  await audit("add_pending_trip", { driven_on: v.driven_on }); // the stops themselves are never written to the log
+}
+export async function deletePendingTrip(id: number): Promise<void> {
+  await sql()`DELETE FROM mileage_pending WHERE id = ${id}`;
+}
+/** Saves the finished trip (miles, optional odometer) and erases the typed stops in one statement. */
+export async function completePendingTrip(id: number, miles_tenths: number, odometer_start: number | null, odometer_end: number | null): Promise<boolean> {
+  const rows = await sql()`WITH p AS (DELETE FROM mileage_pending WHERE id = ${id} AND expires_at > now() RETURNING driven_on, purpose)
+    INSERT INTO mileage_trips (driven_on, miles_tenths, purpose, odometer_start, odometer_end) SELECT driven_on, ${miles_tenths}, purpose, ${odometer_start}, ${odometer_end} FROM p RETURNING id`;
+  if (rows.length) await audit("add_trip", { miles_tenths });
+  return rows.length > 0;
 }
 
 /** Inventory purchases in a period, shown beside expenses only as a reminder. They are not expenses. */

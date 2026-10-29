@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireOwner } from "@/lib/auth";
-import { databaseConfigured, databaseReady, schemaVersion, runSetup, listIncomeAll, lastImportRefunds, listItems, listExpensesAll, listTripsAll, getRules, listMovements, listLotUses, warnDaysByItem, listPayments } from "@/lib/db";
+import { databaseConfigured, databaseReady, schemaVersion, runSetup, listIncomeAll, lastImportRefunds, listItems, listExpensesAll, listTripsAll, getRules, listMovements, listLotUses, warnDaysByItem, listPayments, purgePendingTrips } from "@/lib/db";
 import { setAside } from "@/lib/taxforms";
 import { expiryAlerts, type LotUse } from "@/lib/lots";
 import type { Movement } from "@/lib/inventory";
@@ -29,6 +29,7 @@ export default async function Home() {
   const owner = await requireOwner();
   const configured = databaseConfigured();
   const ready = configured && (await databaseReady());
+  if (ready) await purgePendingTrips(); // erases quick trip stops whose time is up
   const version = ready ? await schemaVersion() : null;
   const today = todayInChicago();
   const periods = periodRanges(today);
