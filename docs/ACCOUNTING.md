@@ -66,6 +66,15 @@ Not posted: mileage (a tax-deduction estimate, not money spent) and refunds flag
 
 **Integrity checks** (Accounting Tools) re-run on all history: every entry balances, no duplicate entries, revenue, tips, fees and expenses in the ledger equal the source records, and the Inventory account equals the inventory report. Warnings flag an expense that looks like a supply purchase already recorded in Supplies, or one that mentions Square fees.
 
+## Mileage calculator (Phase 7)
+
+- **Trip form:** date, starting city, destination city, business purpose, one way or round trip, estimated miles (calculated), optional actual miles, total miles counted, notes. Frequently used cities can be saved. Saved trips hold **cities only**; optional street addresses are used for one estimate and are not saved.
+- **Estimates:** the server asks OpenRouteService for the *driving* distance between the two places (cities are the middle of the city, so city-to-city is an estimate and says so). A round trip doubles it. An estimate stays labelled **Estimated** until you type **Actual miles** (a total for the whole trip), which replaces it and marks the trip **Actual**. If the service is off, down or out of quota, the form says so and you type the miles.
+- **Service and key:** OpenRouteService needs a free API key (account at openrouteservice.org). Set it as `ORS_API_KEY` in Vercel; it is only used on the server and sent in a request header, never put in a page, link, log or error. The free plan has daily and per-minute limits (check the current plan page) and its terms depend on the plan, so confirm business use is allowed for you. Without a key the calculator button is off and manual entry works as before.
+- **Types:** each trip is business, personal or commuting. Only business trips count toward totals, the deduction, the tax packet and the reports; the others are kept and listed as excluded.
+- **Edits:** trips can be edited; each edit saves the previous and new version (`mileage_trip_edits`) and shows as a change history on the trip. An identical trip (same date, cities, direction, miles) asks before saving twice.
+- **Reports** (Financial Reports): Mileage Summary (period vs previous), Monthly Mileage Comparison, Mileage Log; print, PDF, Excel. The deduction is miles × the rate for each trip's tax year from Tax rules (never one hard-coded rate) and shows "rate not set" if none exists. It is an estimate, **not posted to the ledger** and never an operating expense, which is also why it cannot be counted twice; the ledger code does not read the mileage log. Mileage or travel fees charged to customers are income and stay separate.
+
 ## Reliability and limits (Phase 5)
 - Whole-year totals are always computed from every row of the year; if a view ever had more than 50,000 rows it stops with an error instead of showing totals that are silently incomplete.
 - Lists on the Income, Expenses and Mileage pages draw 100 rows at a time ("Show more"); the totals above them still cover everything.

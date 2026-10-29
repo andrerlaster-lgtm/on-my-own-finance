@@ -2,7 +2,7 @@ import { neon } from "@neondatabase/serverless";
 import { EXPORT_ORDER, EXPORT_TABLES, schemaStatements, SCHEMA_VERSION, type ExportTable } from "./schema";
 import { emptyRules, type TaxYearRules } from "./taxRules";
 import type { Expense, ExpenseInput } from "./expenses";
-import type { PendingTrip, Trip, TripInput } from "./mileage";
+import type { PendingTrip, Trip, TripEntry, TripInput } from "./mileage";
 import type { Counts, ImportRow } from "./squareImport";
 import type { IncomeEntry, IncomeInput, TaxForm } from "./income";
 import type { FormEntry, FormType, Payer, Payment, PaymentKind } from "./taxforms";
@@ -357,12 +357,62 @@ export async function deleteReceipt(id: number): Promise<void> {
   if (rows.length) await audit("delete_receipt", { id, expense_id: Number(rows[0].expense_id) });
 }
 
+const TRIP_BASE = `id, to_char(driven_on, 'YYYY-MM-DD') AS driven_on, miles_tenths, purpose, odometer_start, odometer_end`;
+const TRIP_COLS = `${TRIP_BASE}, start_label, end_label, trip_type, category, one_way_est_tenths, miles_status, distance_source, remarks`;
+const toTrip = (r: Record<string, unknown>): Trip => ({
+  id: Number(r.id), driven_on: r.driven_on as string, miles_tenths: Number(r.miles_tenths), purpose: r.purpose as Trip["purpose"],
+  odometer_start: r.odometer_start === null ? null : Number(r.odometer_start), odometer_end: r.odometer_end === null ? null : Number(r.odometer_end),
+  start_label: (r.start_label as string | null | undefined) ?? null, end_label: (r.end_label as string | null | undefined) ?? null,
+  trip_type: (r.trip_type as Trip["trip_type"]) ?? "one_way", category: (r.category as Trip["category"]) ?? "business",
+  one_way_est_tenths: r.one_way_est_tenths === null || r.one_way_est_tenths === undefined ? null : Number(r.one_way_est_tenths),
+  miles_status: (r.miles_status as Trip["miles_status"]) ?? "actual", distance_source: (r.distance_source as Trip["distance_source"]) ?? "manual", remarks: (r.remarks as string | null | undefined) ?? null,
+});
+
 export async function listTrips(from: string, to: string, limit = 500): Promise<Trip[]> {
-  const rows = await sql()`
-    SELECT id, to_char(driven_on, 'YYYY-MM-DD') AS driven_on, miles_tenths, purpose, odometer_start, odometer_end
-    FROM mileage_trips WHERE driven_on BETWEEN ${from}::date AND ${to}::date ORDER BY driven_on DESC, id DESC LIMIT ${limit}`;
-  return rows.map((r) => ({ id: Number(r.id), driven_on: r.driven_on, miles_tenths: Number(r.miles_tenths), purpose: r.purpose,
-    odometer_start: r.odometer_start === null ? null : Number(r.odometer_start), odometer_end: r.odometer_end === null ? null : Number(r.odometer_end) }));
+  const where = `FROM mileage_trips WHERE driven_on BETWEEN $1::date AND $2::date ORDER BY driven_on DESC, id DESC LIMIT $3`;
+  try { return ((await sql().query(`SELECT ${TRIP_COLS} ${where}`, [from, to, limit])) as Record<string, unknown>[]).map(toTrip); }
+  catch { return ((await sql().query(`SELECT ${TRIP_BASE} ${where}`, [from, to, limit])) as Record<string, unknown>[]).map(toTrip); } // database not updated to version 9 yet
+}
+
+export async function getTrip(id: number): Promise<Trip | null> {
+  const r = ((await sql().query(`SELECT ${TRIP_COLS} FROM mileage_trips WHERE id = $1`, [id])) as Record<string, unknown>[])[0];
+  return r ? toTrip(r) : null;
+}
+
+const entryParams = (e: TripEntry) => [e.driven_on, e.miles_tenths, e.purpose, e.odometer_start, e.odometer_end, e.start_label, e.end_label, e.trip_type, e.category, e.one_way_est_tenths, e.miles_status, e.distance_source, e.remarks];
+
+export async function addTripEntry(e: TripEntry): Promise<void> {
+  await sql().query(`INSERT INTO mileage_trips (driven_on, miles_tenths, purpose, odometer_start, odometer_end, start_label, end_label, trip_type, category, one_way_est_tenths, miles_status, distance_source, remarks)
+    VALUES ($1::date, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`, entryParams(e));
+  await audit("add_trip", { driven_on: e.driven_on, miles_tenths: e.miles_tenths, category: e.category });
+}
+
+/** Changes a trip and keeps its previous state in mileage_trip_edits, in one statement so an edit can never be saved without its history. */
+export async function updateTripEntry(id: number, e: TripEntry): Promise<boolean> {
+  const rows = (await sql().query(`WITH old AS (SELECT id, to_jsonb(t) AS j FROM mileage_trips t WHERE id = $1),
+      upd AS (UPDATE mileage_trips SET driven_on = $2::date, miles_tenths = $3, purpose = $4, odometer_start = $5, odometer_end = $6, start_label = $7, end_label = $8, trip_type = $9, category = $10,
+                one_way_est_tenths = $11, miles_status = $12, distance_source = $13, remarks = $14, updated_at = now() WHERE id = $1 RETURNING to_jsonb(mileage_trips) AS j)
+    INSERT INTO mileage_trip_edits (trip_id, before_state, after_state) SELECT old.id, old.j, upd.j FROM old, upd RETURNING trip_id`, [id, ...entryParams(e)])) as Record<string, unknown>[];
+  if (rows.length) await audit("edit_trip", { id });
+  return rows.length > 0;
+}
+
+export interface TripEdit { id: number; edited_at: string; before: Record<string, unknown>; after: Record<string, unknown> | null }
+export async function listTripEdits(tripId: number): Promise<TripEdit[]> {
+  try {
+    return ((await sql().query(`SELECT id, to_char(edited_at AT TIME ZONE 'America/Chicago', 'YYYY-MM-DD HH24:MI') AS edited_at, before_state, after_state FROM mileage_trip_edits WHERE trip_id = $1 ORDER BY id DESC`, [tripId])) as Record<string, unknown>[])
+      .map((r) => ({ id: Number(r.id), edited_at: r.edited_at as string, before: (typeof r.before_state === "string" ? JSON.parse(r.before_state) : r.before_state) as Record<string, unknown>, after: r.after_state ? (typeof r.after_state === "string" ? JSON.parse(r.after_state) : r.after_state) as Record<string, unknown> : null }));
+  } catch { return []; }
+}
+
+export async function listFavorites(): Promise<{ id: number; label: string }[]> {
+  try { return (await sql()`SELECT id, label FROM mileage_favorites ORDER BY lower(label)`).map((r) => ({ id: Number(r.id), label: r.label as string })); } catch { return []; }
+}
+export async function addFavorite(label: string): Promise<void> {
+  await sql()`INSERT INTO mileage_favorites (label) VALUES (${label}) ON CONFLICT (label) DO NOTHING`;
+}
+export async function deleteFavorite(id: number): Promise<void> {
+  await sql()`DELETE FROM mileage_favorites WHERE id = ${id}`;
 }
 
 export async function addTrip(v: TripInput): Promise<void> {

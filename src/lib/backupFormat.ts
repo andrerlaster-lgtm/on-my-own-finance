@@ -15,7 +15,7 @@ export const APP_NAME = "on-my-own-finance";
 export const RESTORE_ORDER = [
   "app_meta", "tax_year_rules", "audit_log", "import_batches", "payers", "income_entries", "income_entry_payers", "expenses", "expense_receipts",
   "mileage_trips", "inventory_items", "inventory_movements", "inventory_lot_uses", "inventory_settings", "form_1099_entries", "tax_payments", "tax_snapshots",
-  "accounts", "expense_category_accounts", "expense_accounts", "income_accounts", "inventory_item_accounts", "journal_entries", "journal_lines",
+  "accounts", "expense_category_accounts", "expense_accounts", "income_accounts", "inventory_item_accounts", "journal_entries", "journal_lines", "mileage_trip_edits", "mileage_favorites",
 ] as const;
 
 export type Row = Record<string, unknown>;

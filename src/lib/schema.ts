@@ -1,9 +1,9 @@
 /*
- * Database schema (version 8). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS, ADD COLUMN IF NOT EXISTS and
+ * Database schema (version 9). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS, ADD COLUMN IF NOT EXISTS and
  * ON CONFLICT only. Nothing here drops or rewrites data. Privacy rule: no column may hold a client or patient's name,
  * contact details, birth date or health information (tests/schema.test.cjs checks the column names).
  */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 export const schemaStatements: string[] = [
   `CREATE TABLE IF NOT EXISTS app_meta (
@@ -232,12 +232,37 @@ export const schemaStatements: string[] = [
      created_at timestamptz NOT NULL DEFAULT now(),
      expires_at timestamptz NOT NULL
    )`,
+  // ---- version 9: trip details for the mileage calculator. Old rows keep their values: they read as business trips with typed miles. ----
+  `ALTER TABLE mileage_trips ADD COLUMN IF NOT EXISTS start_label text CHECK (start_label IS NULL OR char_length(start_label) BETWEEN 1 AND 80)`,
+  `ALTER TABLE mileage_trips ADD COLUMN IF NOT EXISTS end_label text CHECK (end_label IS NULL OR char_length(end_label) BETWEEN 1 AND 80)`,
+  `ALTER TABLE mileage_trips ADD COLUMN IF NOT EXISTS trip_type text NOT NULL DEFAULT 'one_way' CHECK (trip_type IN ('one_way', 'round_trip'))`,
+  `ALTER TABLE mileage_trips ADD COLUMN IF NOT EXISTS category text NOT NULL DEFAULT 'business' CHECK (category IN ('business', 'personal', 'commuting'))`,
+  `ALTER TABLE mileage_trips ADD COLUMN IF NOT EXISTS one_way_est_tenths integer CHECK (one_way_est_tenths IS NULL OR one_way_est_tenths BETWEEN 1 AND 10000)`,
+  `ALTER TABLE mileage_trips ADD COLUMN IF NOT EXISTS miles_status text NOT NULL DEFAULT 'actual' CHECK (miles_status IN ('estimated', 'actual'))`,
+  `ALTER TABLE mileage_trips ADD COLUMN IF NOT EXISTS distance_source text NOT NULL DEFAULT 'manual' CHECK (distance_source IN ('manual', 'odometer', 'route_city', 'route_address'))`,
+  `ALTER TABLE mileage_trips ADD COLUMN IF NOT EXISTS remarks text CHECK (remarks IS NULL OR char_length(remarks) <= 200)`,
+  `ALTER TABLE mileage_trips ADD COLUMN IF NOT EXISTS updated_at timestamptz`,
+  // Every edit keeps what the trip looked like before and after, so changes can be traced. Cities and miles only.
+  `CREATE TABLE IF NOT EXISTS mileage_trip_edits (
+     id           bigserial PRIMARY KEY,
+     trip_id      bigint NOT NULL,
+     edited_at    timestamptz NOT NULL DEFAULT now(),
+     before_state jsonb NOT NULL,
+     after_state  jsonb
+   )`,
+  `CREATE INDEX IF NOT EXISTS mileage_trip_edits_trip_idx ON mileage_trip_edits (trip_id)`,
+  // Frequently used start and end labels (cities), for the quick pick lists.
+  `CREATE TABLE IF NOT EXISTS mileage_favorites (
+     id         bigserial PRIMARY KEY,
+     label      text NOT NULL UNIQUE CHECK (char_length(label) BETWEEN 2 AND 80),
+     created_at timestamptz NOT NULL DEFAULT now()
+   )`,
   `INSERT INTO app_meta (key, value) VALUES ('schema_version', '${SCHEMA_VERSION}')
    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now() WHERE app_meta.value::int < EXCLUDED.value::int`,
 ];
 
 /** Tables included in the full export, in order. */
-export const EXPORT_TABLES = ["app_meta", "tax_year_rules", "audit_log", "import_batches", "income_entries", "inventory_items", "inventory_movements", "expenses", "expense_receipts", "mileage_trips", "inventory_lot_uses", "inventory_settings", "payers", "income_entry_payers", "form_1099_entries", "tax_payments", "tax_snapshots", "accounts", "expense_category_accounts", "expense_accounts", "income_accounts", "inventory_item_accounts", "journal_entries", "journal_lines"] as const;
+export const EXPORT_TABLES = ["app_meta", "tax_year_rules", "audit_log", "import_batches", "income_entries", "inventory_items", "inventory_movements", "expenses", "expense_receipts", "mileage_trips", "inventory_lot_uses", "inventory_settings", "payers", "income_entry_payers", "form_1099_entries", "tax_payments", "tax_snapshots", "accounts", "expense_category_accounts", "expense_accounts", "income_accounts", "inventory_item_accounts", "journal_entries", "journal_lines", "mileage_trip_edits", "mileage_favorites"] as const;
 export type ExportTable = (typeof EXPORT_TABLES)[number];
 
 /** Column each exported table is sorted by (every other table has an id column). */

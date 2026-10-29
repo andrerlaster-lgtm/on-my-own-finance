@@ -78,7 +78,7 @@ export const variance = (cur: number, prior: number): { amount: number; percent:
 
 /* ---------- report documents: one shape rendered on screen, in print, and exported to Excel and PDF ---------- */
 
-export interface Cell { text: string; amount?: number; percent?: number | null; href?: string; bold?: boolean }
+export interface Cell { text: string; amount?: number; /** miles in tenths */ miles?: number; percent?: number | null; href?: string; bold?: boolean }
 export type RowKind = "section" | "line" | "subtotal" | "total" | "note" | "blank";
 export interface DocRow { kind: RowKind; indent?: number; cells: Cell[] }
 export interface DocColumn { label: string; align: "left" | "right" }

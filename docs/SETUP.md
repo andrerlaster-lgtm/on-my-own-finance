@@ -13,6 +13,7 @@ Approved plan: Vercel Pro (about $20/month; Hobby is non-commercial only), Neon 
    - `NEXTAUTH_SECRET` — a long random string (`openssl rand -base64 32`)
    - `NEXTAUTH_URL` — your Vercel URL
    - `OWNER_GITHUB_ID` — the numeric ID from step 2
+   - `ORS_API_KEY` — optional, a free OpenRouteService key so the Mileage page can estimate driving distances (see ACCOUNTING.md, Mileage calculator)
 4. Deploy, sign in, press **Set up database** on the home page.
 5. Do the restore drill in [BACKUPS.md](BACKUPS.md) **before** entering real data.
 

@@ -29,12 +29,23 @@ test("version 6 only adds the optional July 1 mileage rate columns", () => {
   const v6 = S.schemaStatements.filter((s) => /mileage_rate_h2/.test(s));
   assert.equal(v6.length, 2);
   for (const s of v6) assert.match(s, /^ALTER TABLE tax_year_rules ADD COLUMN IF NOT EXISTS/);
-  assert.equal(S.schemaStatements.filter((s) => /^\s*ALTER/i.test(s)).length, 2, "only these two ALTER statements exist");
+  assert.ok(S.schemaStatements.filter((s) => /^\s*ALTER/i.test(s)).length >= 2);
 });
 
 test("version 8: temporary trip stops expire, are capped, and are never exported or backed up", () => {
-  assert.equal(S.SCHEMA_VERSION, 8);
+  assert.ok(S.SCHEMA_VERSION >= 8);
   const sql = S.schemaStatements.find((x) => /CREATE TABLE IF NOT EXISTS mileage_pending/.test(x));
   assert.ok(sql); assert.match(sql, /expires_at\s+timestamptz NOT NULL/); assert.match(sql, /char_length\(start_text\) BETWEEN 1 AND 120/);
   assert.ok(!S.EXPORT_TABLES.includes("mileage_pending"), "stops must never reach an export or backup file");
+});
+
+test("version 9: mileage details are added as optional/defaulted columns, edits are kept, and old rows stay valid", () => {
+  assert.equal(S.SCHEMA_VERSION, 9);
+  const alters = S.schemaStatements.filter((x) => /^\s*ALTER TABLE mileage_trips/.test(x));
+  assert.equal(alters.length, 9);
+  for (const a of alters) assert.match(a, /ADD COLUMN IF NOT EXISTS \w+ [^,]*(DEFAULT|CHECK \(\w+ IS NULL|timestamptz$)/, a);
+  const all = S.schemaStatements.join("\n");
+  assert.match(all, /category\s+text NOT NULL DEFAULT 'business'/);
+  assert.match(all, /miles_status text NOT NULL DEFAULT 'actual'/);
+  for (const t of ["mileage_trip_edits", "mileage_favorites"]) assert.ok(S.EXPORT_TABLES.includes(t), t);
 });

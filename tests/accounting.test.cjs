@@ -355,7 +355,7 @@ const unzip = (buf) => {
 
 test("every listed report builds from the ledger, and unavailable statements say why instead of showing numbers", () => {
   const { ledger } = scenario();
-  for (const r of R.REPORTS) { const doc = R.buildReport(r.id, ledger, accounts, { period: "month", y: "2026", m: "10" }, "2026-10-15"); assert.ok(doc, r.id); assert.ok(!doc.blocked, r.id); }
+  for (const r of R.REPORTS) { const doc = R.buildReport(r.id, ledger, accounts, { period: "month", y: "2026", m: "10" }, "2026-10-15", { trips: [], rates: {} }); assert.ok(doc, r.id); assert.ok(!doc.blocked, r.id); }
   const bs = R.buildReport("balance-sheet", ledger, accounts, {}, "2026-10-15");
   assert.ok(bs.blocked && bs.rows.length === 0, "no balance sheet numbers");
   assert.equal(R.buildReport("nope", ledger, accounts, {}, "2026-10-15"), null);
