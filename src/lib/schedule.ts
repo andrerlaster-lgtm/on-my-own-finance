@@ -42,18 +42,22 @@ export const CANCEL_REASONS = [
 export type CancelReason = (typeof CANCEL_REASONS)[number]["id"];
 export const CANCEL_REASON_LABELS: Record<string, string> = Object.fromEntries(CANCEL_REASONS.map((r) => [r.id, r.label]));
 
-/** Starting service list (seeded into appointment_services; generic service types only). The database table is the source of truth. */
+/**
+ * The services offered, in order (seeded and kept current by the database migration; the appointment_services table is the source of truth).
+ * Services that used to be offered are kept in the table but deactivated, because existing appointments may still refer to them.
+ */
 export const DEFAULT_SERVICES = [
-  { code: "blood_draw", label: "Blood draw", default_minutes: 30, sort: 10 },
-  { code: "specimen_collection", label: "Specimen collection", default_minutes: 30, sort: 20 },
-  { code: "specimen_delivery", label: "Specimen pickup or delivery", default_minutes: 30, sort: 30 },
-  { code: "consultation", label: "Consultation", default_minutes: 30, sort: 40 },
-  { code: "other_service", label: "Other service", default_minutes: 30, sort: 90 },
+  { code: "blood_draw", label: "Blood Draw", default_minutes: 30, sort: 10 },
+  { code: "gender_reveal_testing", label: "Gender Reveal Testing", default_minutes: 30, sort: 20 },
+  { code: "therapeutic_draw", label: "Therapeutic Draw", default_minutes: 30, sort: 30 },
+  { code: "travel_lab", label: "Travel Lab", default_minutes: 30, sort: 40 },
 ] as const;
+/** Codes that were offered before and are now deactivated (never deleted). */
+export const RETIRED_SERVICE_CODES = ["specimen_collection", "specimen_delivery", "consultation", "other_service"] as const;
 export interface Service { code: string; label: string; default_minutes: number; active: boolean }
 
-export const DURATIONS = [15, 30, 45, 60, 90, 120, 180, 240] as const;
-export const MAX_MINUTES = 12 * 60;
+/** Every new appointment holds a 30-minute window internally (for overlap checks). It is not shown or asked for anywhere. */
+export const INTERNAL_MINUTES = 30;
 
 export interface Appointment {
   id: number; type: AppointmentType; status: Status; service_code: string;
@@ -138,8 +142,13 @@ export function overlaps(a: Pick<Appointment, "starts_at" | "ends_at" | "status"
 export function findConflicts<T extends Pick<Appointment, "id" | "starts_at" | "ends_at" | "status">>(existing: readonly T[], candidate: Pick<Appointment, "starts_at" | "ends_at" | "status"> & { id?: number | null }): T[] {
   return existing.filter((e) => e.id !== candidate.id && overlaps(e, candidate)).sort((x, y) => x.starts_at - y.starts_at);
 }
+/** "9:30 AM CST": the start time only. The length of an appointment is not shown anywhere. */
+export function startLabel(a: Pick<Appointment, "starts_at">): string {
+  const s = toLocal(a.starts_at);
+  return `${clock(s.time)} ${s.zone}`;
+}
 export const conflictText = (c: readonly Pick<Appointment, "id" | "starts_at" | "ends_at">[]): string =>
-  `That time overlaps ${c.length === 1 ? "an existing appointment" : "existing appointments"}: ${c.map((x) => `#${x.id} on ${dayLabel(dateOf(x.starts_at))}, ${rangeLabel(x)}`).join("; ")}.`;
+  `That time is too close to ${c.length === 1 ? "an existing appointment" : "existing appointments"}: ${c.map((x) => `#${x.id} on ${dayLabel(dateOf(x.starts_at))} at ${startLabel(x)}`).join("; ")}.`;
 
 /* ---------------- statuses ---------------- */
 const NEXT: Record<Status, Status[]> = { scheduled: ["confirmed", "completed", "canceled"], confirmed: ["scheduled", "completed", "canceled"], completed: [], canceled: ["scheduled"] };
@@ -161,14 +170,17 @@ export function checkTransition(from: Status, to: Status, startsAt: number, now:
 export interface AppointmentInput { type: AppointmentType; service_code: string; starts_at: number; ends_at: number; ambiguous: boolean }
 export type Parsed<T> = { ok: true; value: T } | { ok: false; errors: string[] };
 
-export function parseAppointmentForm(f: Record<string, string | undefined>, services: readonly Pick<Service, "code" | "active">[]): Parsed<AppointmentInput> {
+/**
+ * `keepMinutes`: when editing, the appointment's existing window, so changing the service or type never silently changes its length.
+ * Any "length" sent by a browser is ignored.
+ */
+export function parseAppointmentForm(f: Record<string, string | undefined>, services: readonly Pick<Service, "code" | "active">[], keepMinutes?: number): Parsed<AppointmentInput> {
   const errors: string[] = [];
   const type = f.type as AppointmentType;
   if (!APPOINTMENT_TYPES.some((t) => t.id === type)) errors.push("Type: choose Office or Mobile.");
   const service = services.find((s) => s.code === f.service_code);
   if (!service || !service.active) errors.push("Service: choose one from the list.");
-  const minutes = /^\d{1,3}$/.test((f.minutes ?? "").trim()) ? Number(f.minutes) : NaN;
-  if (!Number.isInteger(minutes) || minutes < 5 || minutes > MAX_MINUTES || minutes % 5 !== 0) errors.push("Length: pick a length in minutes (5 to 720, in steps of 5).");
+  const minutes = keepMinutes && Number.isInteger(keepMinutes) && keepMinutes > 0 ? keepMinutes : INTERNAL_MINUTES;
   const start = fromLocal(f.date ?? "", f.time ?? "");
   if (!start.ok) errors.push(`Start: ${start.error}`);
   if (errors.length || !start.ok) return { ok: false, errors };

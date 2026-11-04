@@ -35,7 +35,7 @@ export default async function NewAppointment({ searchParams }: { searchParams: P
       <h1>New appointment</h1>
       <SecretaryNav date={date} active="new" />
       {sp.error && <div className="card err">{sp.error.split(" | ").map((e) => <div key={e}>{e}</div>)}</div>}
-      <AppointmentForm action={create} services={services} submitLabel="Add appointment" values={{ date, time: "09:00", type: "office", service_code: first?.code ?? "", minutes: first?.default_minutes ?? 30 }} />
+      <AppointmentForm action={create} services={services} submitLabel="Add appointment" values={{ date, time: "09:00", type: "office", service_code: first?.code ?? "" }} />
       <p><Link href={`/secretary?date=${date}`}>← Back to the calendar</Link></p>
     </main>
   );

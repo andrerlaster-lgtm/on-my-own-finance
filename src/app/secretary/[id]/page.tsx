@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { requireOwner } from "@/lib/auth";
 import { databaseReady, schemaVersion, listServices, getAppointment, updateAppointment, setAppointmentStatus } from "@/lib/db";
-import { CANCEL_REASONS, CANCEL_REASON_LABELS, STATUS_LABELS, TYPE_LABELS, allowedNext, checkTransition, dayLabel, isEditable, isStatus, minutesOf, parseAppointmentForm, parseCancelReason, rangeLabel, toLocal } from "@/lib/schedule";
+import { CANCEL_REASONS, CANCEL_REASON_LABELS, STATUS_LABELS, TYPE_LABELS, allowedNext, checkTransition, dayLabel, isEditable, isStatus, minutesOf, parseAppointmentForm, parseCancelReason, startLabel, toLocal } from "@/lib/schedule";
 import { AppointmentForm } from "@/components/AppointmentForm";
 import { SecretaryNav } from "@/components/SecretaryNav";
 import { SubmitButton } from "@/components/SubmitButton";
@@ -17,7 +17,11 @@ async function save(fd: FormData) {
   const id = idOf(fd);
   const raw: Record<string, string> = {};
   for (const [k, v] of fd.entries()) if (typeof v === "string") raw[k] = v;
-  const parsed = parseAppointmentForm(raw, await listServices());
+  const current = id ? await getAppointment(id) : null;
+  if (!current) return back(id, `error=${encodeURIComponent("Appointment not found.")}`);
+  // An appointment may keep a service that has since been retired (and its existing length); only NEW choices are limited to the current four.
+  const services = (await listServices()).map((s) => (s.code === current.service_code ? { ...s, active: true } : s));
+  const parsed = parseAppointmentForm(raw, services, minutesOf(current));
   if (!parsed.ok) return back(id, `error=${encodeURIComponent(parsed.errors.join(" | "))}`);
   const r = await updateAppointment(id, parsed.value);
   if (!r.ok) return back(id, `error=${encodeURIComponent(r.error)}`);
@@ -58,7 +62,7 @@ export default async function AppointmentPage({ params, searchParams }: { params
       {sp.error && <div className="card err">{sp.error.split(" | ").map((e) => <div key={e}>{e}</div>)}</div>}
       <div className="card">
         <h2>{label} <span className="muted">{STATUS_LABELS[a.status]}</span></h2>
-        <p>{dayLabel(s.date)}, {rangeLabel(a)}<br /><span className="muted">{TYPE_LABELS[a.type]} · {minutesOf(a)} minutes{a.cancel_reason ? ` · canceled: ${CANCEL_REASON_LABELS[a.cancel_reason]}` : ""}{a.source !== "internal" ? ` · from the ${a.source}` : ""}</span></p>
+        <p>{dayLabel(s.date)} at {startLabel(a)}<br /><span className="muted">{TYPE_LABELS[a.type]}{a.cancel_reason ? ` · canceled: ${CANCEL_REASON_LABELS[a.cancel_reason]}` : ""}{a.source !== "internal" ? ` · from the ${a.source}` : ""}</span></p>
         {moves.length > 0 && (
           <div className="row">
             {moves.filter((m) => m !== "canceled").map((m) => (
@@ -78,7 +82,7 @@ export default async function AppointmentPage({ params, searchParams }: { params
       </div>
       {isEditable(a.status) && <>
         <h2>Change the time or details</h2>
-        <AppointmentForm action={save} services={services} submitLabel="Save changes" hidden={{ id: a.id }} values={{ date: s.date, time: s.time, type: a.type, service_code: a.service_code, minutes: minutesOf(a) }} />
+        <AppointmentForm action={save} services={services} submitLabel="Save changes" hidden={{ id: a.id }} values={{ date: s.date, time: s.time, type: a.type, service_code: a.service_code }} />
       </>}
       <p><Link href={`/secretary?date=${s.date}`}>← Back to the calendar</Link></p>
     </main>
