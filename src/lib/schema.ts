@@ -1,9 +1,9 @@
 /*
- * Database schema (version 9). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS, ADD COLUMN IF NOT EXISTS and
+ * Database schema (version 10). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS, ADD COLUMN IF NOT EXISTS and
  * ON CONFLICT only. Nothing here drops or rewrites data. Privacy rule: no column may hold a client or patient's name,
  * contact details, birth date or health information (tests/schema.test.cjs checks the column names).
  */
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 export const schemaStatements: string[] = [
   `CREATE TABLE IF NOT EXISTS app_meta (
@@ -269,6 +269,14 @@ export const schemaStatements: string[] = [
    )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS appointments_external_ref_idx ON appointments (source, external_ref) WHERE external_ref IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS appointments_starts_idx ON appointments (starts_at)`,
+  // ---- version 10: the offered services become exactly four. Only appointment_services rows are touched, never appointments: the four are inserted (or brought up to date,
+  // so "blood_draw" becomes "Blood Draw") and the services that used to be offered are DEACTIVATED, not deleted, because existing appointments may still refer to them.
+  // Safe to repeat. Runs after the version 9 seed above, so it works whether the database was on version 8 or 9. ----
+  `INSERT INTO appointment_services (code, label, default_minutes, sort_order, active) VALUES
+     ('blood_draw', 'Blood Draw', 30, 10, true), ('gender_reveal_testing', 'Gender Reveal Testing', 30, 20, true),
+     ('therapeutic_draw', 'Therapeutic Draw', 30, 30, true), ('travel_lab', 'Travel Lab', 30, 40, true)
+   ON CONFLICT (code) DO UPDATE SET label = EXCLUDED.label, default_minutes = EXCLUDED.default_minutes, sort_order = EXCLUDED.sort_order, active = true`,
+  `UPDATE appointment_services SET active = false WHERE code IN ('specimen_collection', 'specimen_delivery', 'consultation', 'other_service') AND active`,
   `INSERT INTO app_meta (key, value) VALUES ('schema_version', '${SCHEMA_VERSION}')
    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now() WHERE app_meta.value::int < EXCLUDED.value::int`,
 ];

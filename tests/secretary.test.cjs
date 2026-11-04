@@ -65,7 +65,7 @@ test("overlaps: touching is fine, any shared time is not, canceled never blocks,
   const list = [a, appt(2, "2026-11-04", "10:00", 60), appt(3, "2026-11-04", "09:20", 20, "canceled")];
   assert.deepEqual(X.findConflicts(list, { starts_at: at("2026-11-04", "09:15"), ends_at: at("2026-11-04", "10:15"), status: "scheduled" }).map((c) => c.id), [1, 2]);
   assert.deepEqual(X.findConflicts(list, { id: 1, starts_at: at("2026-11-04", "09:00"), ends_at: at("2026-11-04", "09:45"), status: "scheduled" }), [], "moving an appointment within its own slot is fine");
-  assert.match(X.conflictText([a]), /overlaps an existing appointment: #1 on Wed Nov 4, 9:00 AM to 9:30 AM CST/);
+  assert.match(X.conflictText([a]), /too close to an existing appointment: #1 on Wed Nov 4 at 9:00 AM CST/);
   // DST: two real-time-adjacent bookings across the repeated hour do not collide even though their wall clocks match
   const first = X.fromLocal("2026-11-01", "01:30").ms, second = first + 3600000;
   assert.equal(X.overlaps({ starts_at: first, ends_at: first + 1800000, status: "scheduled" }, { starts_at: second, ends_at: second + 1800000, status: "scheduled" }), false);
@@ -85,13 +85,14 @@ test("status rules: scheduled, confirmed, completed, canceled", () => {
 
 // ---------- forms ----------
 const services = [{ code: "blood_draw", active: true }, { code: "old_service", active: false }];
-test("the appointment form accepts only fixed choices, a real Chicago time and a sensible length", () => {
-  const f = (o) => X.parseAppointmentForm({ date: "2026-11-04", time: "09:30", minutes: "30", type: "mobile", service_code: "blood_draw", ...o }, services);
+test("the appointment form accepts only fixed choices and a real Chicago time; the length is always the internal 30-minute window", () => {
+  const f = (o) => X.parseAppointmentForm({ date: "2026-11-04", time: "09:30", type: "mobile", service_code: "blood_draw", ...o }, services);
   const ok = f({}); assert.equal(ok.ok, true);
   assert.deepEqual([ok.value.type, ok.value.service_code, ok.value.starts_at === at("2026-11-04", "09:30"), ok.value.ends_at - ok.value.starts_at], ["mobile", "blood_draw", true, 1800000]);
-  for (const bad of [{ type: "home" }, { type: "" }, { service_code: "mystery" }, { service_code: "old_service" }, { minutes: "0" }, { minutes: "7" }, { minutes: "725" }, { minutes: "abc" }, { minutes: "-30" }, { date: "nope" }, { time: "25:00" }, { time: "02:30", date: "2026-03-08" }])
+  for (const bad of [{ type: "home" }, { type: "" }, { service_code: "mystery" }, { service_code: "old_service" }, { date: "nope" }, { time: "25:00" }, { time: "02:30", date: "2026-03-08" }])
     assert.equal(f(bad).ok, false, JSON.stringify(bad));
   assert.equal(f({ type: "office" }).ok, true);
+  assert.equal(f({ minutes: "240" }).value.ends_at - f({}).value.starts_at, 1800000, "a length sent by a browser is ignored");
   assert.equal(f({ date: "2026-11-01", time: "01:30" }).value.ambiguous, true);
   // extra fields a person might try to send are ignored, never stored
   assert.deepEqual(Object.keys(f({ patient_name: "Jane Doe", phone: "5551234567", notes: "has diabetes" }).value).sort(), ["ambiguous", "ends_at", "service_code", "starts_at", "type"]);
@@ -115,7 +116,7 @@ test("appointments store no names, contact details, medical details or free text
 test("version 9 only adds new tables; double bookings are blocked by the database itself; the website can integrate safely", () => {
   assert.ok(S.SCHEMA_VERSION >= 9);
   const stmts = S.schemaStatements.filter((s) => /appointment/.test(s));
-  assert.ok(stmts.every((s) => /^\s*(CREATE (UNIQUE )?(TABLE|INDEX) IF NOT EXISTS|INSERT INTO appointment_services)/.test(s)) && stmts.length === 5, "tables, an idempotent seed and two indexes, nothing else");
+  assert.ok(stmts.every((s) => /^\s*(CREATE (UNIQUE )?(TABLE|INDEX) IF NOT EXISTS|INSERT INTO appointment_services|UPDATE appointment_services SET active = false)/.test(s)) && stmts.length === 7, "tables, the seed, two indexes and the version 10 service update, nothing else");
   assert.match(stmts.find((s) => /^\s*INSERT/.test(s)), /ON CONFLICT \(code\) DO NOTHING/);
   const t = stmts.find((s) => /CREATE TABLE IF NOT EXISTS appointments/.test(s));
   assert.match(t, /EXCLUDE USING gist \(tstzrange\(starts_at, ends_at\) WITH &&\) WHERE \(status <> 'canceled'\)/);
@@ -126,7 +127,8 @@ test("version 9 only adds new tables; double bookings are blocked by the databas
   assert.doesNotMatch(stmts.join("\n"), /REFERENCES (income|expenses|inventory|journal|accounts|mileage|tax)/, "no link to money, supplies or tax tables");
   assert.ok(S.schemaStatements.at(-1).includes("schema_version"));
   // the seeded services match the app's defaults
-  for (const sv of X.DEFAULT_SERVICES) assert.ok(stmts.join("\n").includes(`'${sv.code}', '${sv.label}', ${sv.default_minutes}, ${sv.sort}`), sv.code);
+  const v10 = stmts.find((s) => /ON CONFLICT \(code\) DO UPDATE/.test(s));
+  for (const sv of X.DEFAULT_SERVICES) assert.ok(v10.includes(`('${sv.code}', '${sv.label}', ${sv.default_minutes}, ${sv.sort}, true)`), sv.code);
 });
 
 test("new tables are in the export, the backup and the restore order (parents first)", () => {
@@ -205,7 +207,7 @@ test("overlap protection still covers the part of a midnight-crossing appointmen
   const late = { id: 7, status: "scheduled", starts_at: at("2026-11-03", "23:30"), ends_at: at("2026-11-04", "00:30") };
   assert.deepEqual(X.findConflicts([late], { starts_at: at("2026-11-04", "00:15"), ends_at: at("2026-11-04", "00:45"), status: "scheduled" }).map((a) => a.id), [7]);
   assert.deepEqual(X.findConflicts([late], { starts_at: at("2026-11-04", "00:30"), ends_at: at("2026-11-04", "01:00"), status: "scheduled" }), [], "back to back is still fine");
-  assert.match(X.conflictText([late]), /#7 on Tue Nov 3, 11:30 PM to 12:30 AM CST/);
+  assert.match(X.conflictText([late]), /#7 on Tue Nov 3 at 11:30 PM CST/);
 });
 
 test("the calendar queries return appointments that overlap the window, so both days and the whole week see them; privacy and accounting isolation are unchanged", () => {
@@ -217,4 +219,42 @@ test("the calendar queries return appointments that overlap the window, so both 
   const row = rd("src/components/AppointmentRow.tsx"); assert.match(row, /continues past midnight/); assert.match(row, /continues from the day before/);
   assert.doesNotMatch(row + rd("src/lib/schedule.ts").replace(/\/\*[\s\S]*?\*\//g, ""), /income|expense|inventory|revenue|cents|patient|phone|address/i);
   assert.doesNotMatch(fn, /income|expenses|inventory_|journal_|accounts/);
+});
+
+// ---------- the four services (version 10) ----------
+test("exactly four services are offered; the earlier ones are deactivated, never deleted, and no appointment row is touched", () => {
+  assert.deepEqual(X.DEFAULT_SERVICES.map((s) => s.label), ["Blood Draw", "Gender Reveal Testing", "Therapeutic Draw", "Travel Lab"]);
+  assert.deepEqual(X.DEFAULT_SERVICES.map((s) => s.code), ["blood_draw", "gender_reveal_testing", "therapeutic_draw", "travel_lab"]);
+  assert.deepEqual([...X.RETIRED_SERVICE_CODES], ["specimen_collection", "specimen_delivery", "consultation", "other_service"]);
+  assert.ok(S.SCHEMA_VERSION >= 10);
+  const stmts = S.schemaStatements.filter((s) => /appointment_services/.test(s) && !/CREATE TABLE/.test(s));
+  const v9seed = stmts[0], upsert = stmts[1], retire = stmts[2];
+  assert.match(v9seed, /ON CONFLICT \(code\) DO NOTHING/, "the version 9 seed is unchanged (it may already have run)");
+  assert.match(upsert, /ON CONFLICT \(code\) DO UPDATE SET label = EXCLUDED\.label/); assert.doesNotMatch(upsert, /DELETE/);
+  assert.match(retire, /^\s*UPDATE appointment_services SET active = false WHERE code IN \('specimen_collection', 'specimen_delivery', 'consultation', 'other_service'\) AND active$/, "only the four known earlier services are deactivated");
+  assert.doesNotMatch(S.schemaStatements.join("\n"), /DELETE FROM appointment|UPDATE appointments|DELETE FROM appointment_services|DROP TABLE/i, "existing appointments and service rows are never deleted or rewritten");
+  assert.ok(S.schemaStatements.indexOf(v9seed) < S.schemaStatements.indexOf(upsert) && S.schemaStatements.indexOf(upsert) < S.schemaStatements.indexOf(retire) && S.schemaStatements.indexOf(retire) < S.schemaStatements.length - 1, "runs after the version 9 seed and before the version stamp");
+  // a service that was retired is still accepted when it is the appointment's own (editing), but never for a new choice
+  const list = [{ code: "blood_draw", active: true }, { code: "consultation", active: false }];
+  const base = { date: "2026-11-04", time: "09:30", type: "office" };
+  assert.equal(X.parseAppointmentForm({ ...base, service_code: "consultation" }, list).ok, false, "a retired service cannot be picked for a new appointment");
+  assert.equal(X.parseAppointmentForm({ ...base, service_code: "consultation" }, list.map((s) => (s.code === "consultation" ? { ...s, active: true } : s))).ok, true);
+  const page = rd("src/app/secretary/[id]/page.tsx");
+  assert.match(page, /s\.code === current\.service_code \? \{ \.\.\.s, active: true \} : s/, "the edit page lets an appointment keep its retired service");
+});
+
+test("the length is not asked for or shown anywhere; editing keeps an existing appointment's window; overlap protection is unchanged", () => {
+  const ui = ["src/components/AppointmentForm.tsx", "src/components/AppointmentRow.tsx", "src/app/secretary/page.tsx", "src/app/secretary/week/page.tsx", "src/app/secretary/new/page.tsx", "src/app/secretary/[id]/page.tsx", "src/app/page.tsx"].map(rd).join("\n");
+  assert.doesNotMatch(ui, /name="minutes"|minutes<|\bminutes\b[^"]*<\/option>|DURATIONS|\bmin\b|{minutesOf\(a\)}[^)]*minutes|rangeLabel|spanLabel/, "no length field, no 'N min', no end times");
+  assert.equal(X.INTERNAL_MINUTES, 30); assert.equal(X.DURATIONS, undefined);
+  const p = X.parseAppointmentForm({ date: "2026-11-04", time: "09:30", type: "office", service_code: "blood_draw", minutes: "5" }, [{ code: "blood_draw", active: true }]);
+  assert.equal(p.value.ends_at - p.value.starts_at, 30 * 60000);
+  const kept = X.parseAppointmentForm({ date: "2026-11-04", time: "09:30", type: "office", service_code: "blood_draw" }, [{ code: "blood_draw", active: true }], 60);
+  assert.equal(kept.value.ends_at - kept.value.starts_at, 60 * 60000, "an older 60-minute appointment stays 60 minutes when edited");
+  assert.equal(X.startLabel({ starts_at: at("2026-11-04", "09:30") }), "9:30 AM CST"); assert.equal(X.startLabel({ starts_at: at("2026-07-04", "21:05") }), "9:05 PM CDT");
+  // 30-minute windows still collide and still allow back to back, and the database constraint is untouched
+  const a = appt(1, "2026-11-04", "09:00", 30);
+  assert.equal(X.overlaps(a, appt(2, "2026-11-04", "09:15", 30)), true); assert.equal(X.overlaps(a, appt(2, "2026-11-04", "09:30", 30)), false);
+  assert.match(S.schemaStatements.find((s) => /CREATE TABLE IF NOT EXISTS appointments/.test(s)), /EXCLUDE USING gist \(tstzrange\(starts_at, ends_at\) WITH &&\) WHERE \(status <> 'canceled'\)/);
+  assert.doesNotMatch(rd("src/lib/auth.ts"), /secretary|appointment/i, "authentication code is untouched");
 });

@@ -4,7 +4,7 @@ const S = require("../.testbuild/schema.js");
 test("every statement is additive and re-runnable", () => {
   for (const s of S.schemaStatements) {
     // The only ALTER allowed is adding a column that may already exist (nothing is changed, dropped or rewritten).
-    assert.match(s, /^\s*(CREATE (UNIQUE )?(TABLE|INDEX) IF NOT EXISTS|INSERT INTO (app_meta|appointment_services)|ALTER TABLE \w+ ADD COLUMN IF NOT EXISTS )/);
+    assert.match(s, /^\s*(CREATE (UNIQUE )?(TABLE|INDEX) IF NOT EXISTS|INSERT INTO (app_meta|appointment_services)|UPDATE appointment_services SET active = false WHERE code IN|ALTER TABLE \w+ ADD COLUMN IF NOT EXISTS )/);
     assert.doesNotMatch(s.replace(/^\s*ALTER TABLE \w+ ADD COLUMN IF NOT EXISTS/i, ""), /\b(DROP|TRUNCATE|DELETE|ALTER)\b/i);
   }
   assert.match(S.schemaStatements.at(-1), /ON CONFLICT/);
