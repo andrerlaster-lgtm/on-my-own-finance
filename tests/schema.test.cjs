@@ -4,7 +4,7 @@ const S = require("../.testbuild/schema.js");
 test("every statement is additive and re-runnable", () => {
   for (const s of S.schemaStatements) {
     // The only ALTER allowed is adding a column that may already exist (nothing is changed, dropped or rewritten).
-    assert.match(s, /^\s*(CREATE (UNIQUE )?(TABLE|INDEX) IF NOT EXISTS|INSERT INTO (app_meta|appointment_services)|UPDATE appointment_services SET active = false WHERE code IN|ALTER TABLE \w+ ADD COLUMN IF NOT EXISTS )/);
+    assert.match(s, /^\s*(CREATE (UNIQUE )?(TABLE|INDEX) IF NOT EXISTS|INSERT INTO (app_meta|appointment_services)|UPDATE appointment_services SET active = false WHERE code IN|CREATE OR REPLACE FUNCTION (app_record_payment|record_appointment_payment|complete_appointment)|ALTER TABLE \w+ ADD COLUMN IF NOT EXISTS )/);
     assert.doesNotMatch(s.replace(/^\s*ALTER TABLE \w+ ADD COLUMN IF NOT EXISTS/i, ""), /\b(DROP|TRUNCATE|DELETE|ALTER)\b/i);
   }
   assert.match(S.schemaStatements.at(-1), /ON CONFLICT/);
@@ -29,7 +29,7 @@ test("version 6 only adds the optional July 1 mileage rate columns", () => {
   const v6 = S.schemaStatements.filter((s) => /mileage_rate_h2/.test(s));
   assert.equal(v6.length, 2);
   for (const s of v6) assert.match(s, /^ALTER TABLE tax_year_rules ADD COLUMN IF NOT EXISTS/);
-  assert.equal(S.schemaStatements.filter((s) => /^\s*ALTER/i.test(s)).length, 2, "only these two ALTER statements exist");
+  assert.equal(S.schemaStatements.filter((s) => /^\s*ALTER TABLE tax_year_rules/i.test(s)).length, 2, "only these two tax_year_rules ALTER statements exist");
 });
 
 test("version 8: temporary trip stops expire, are capped, and are never exported or backed up", () => {

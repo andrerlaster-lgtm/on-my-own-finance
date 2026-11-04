@@ -25,7 +25,7 @@ async function create(fd: FormData) {
 export default async function NewAppointment({ searchParams }: { searchParams: Promise<{ date?: string; error?: string }> }) {
   await requireOwner();
   if (!(await databaseReady())) redirect("/");
-  if (((await schemaVersion()) ?? 0) < 9) redirect("/secretary");
+  if (((await schemaVersion()) ?? 0) < 11) redirect("/secretary");
   const sp = await searchParams;
   const date = parseDate(sp.date) ?? todayInChicago();
   const services = await listServices();
@@ -35,7 +35,7 @@ export default async function NewAppointment({ searchParams }: { searchParams: P
       <h1>New appointment</h1>
       <SecretaryNav date={date} active="new" />
       {sp.error && <div className="card err">{sp.error.split(" | ").map((e) => <div key={e}>{e}</div>)}</div>}
-      <AppointmentForm action={create} services={services} submitLabel="Add appointment" values={{ date, time: "09:00", type: "office", service_code: first?.code ?? "" }} />
+      <AppointmentForm action={create} services={services} submitLabel="Add appointment" values={{ date, time: "09:00", type: "office", service_code: first?.code ?? "", price: "" }} />
       <p><Link href={`/secretary?date=${date}`}>← Back to the calendar</Link></p>
     </main>
   );

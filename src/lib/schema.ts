@@ -1,9 +1,9 @@
 /*
- * Database schema (version 10). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS, ADD COLUMN IF NOT EXISTS and
+ * Database schema (version 11). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS, ADD COLUMN IF NOT EXISTS and
  * ON CONFLICT only. Nothing here drops or rewrites data. Privacy rule: no column may hold a client or patient's name,
  * contact details, birth date or health information (tests/schema.test.cjs checks the column names).
  */
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 export const schemaStatements: string[] = [
   `CREATE TABLE IF NOT EXISTS app_meta (
@@ -277,12 +277,127 @@ export const schemaStatements: string[] = [
      ('therapeutic_draw', 'Therapeutic Draw', 30, 30, true), ('travel_lab', 'Travel Lab', 30, 40, true)
    ON CONFLICT (code) DO UPDATE SET label = EXCLUDED.label, default_minutes = EXCLUDED.default_minutes, sort_order = EXCLUDED.sort_order, active = true`,
   `UPDATE appointment_services SET active = false WHERE code IN ('specimen_collection', 'specimen_delivery', 'consultation', 'other_service') AND active`,
+  // ---- version 11: appointment money and supplies. Two new columns on appointments (a price, and when it was completed) and three new tables. Nothing existing is rewritten.
+  // A payment is ONE row here plus ONE existing income_entries row (the table Income already uses), so income, the ledger and tax summaries count it once. Square / Card
+  // payments create no income themselves: they wait for the Square import and are linked by exact Square payment ID or an explicit choice. Receivables are not stored:
+  // they are price minus payments for completed appointments. Supplies are ordinary inventory "use" movements linked to the appointment. No personal details, no free text. ----
+  `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS price_cents bigint CHECK (price_cents IS NULL OR (price_cents >= 0 AND price_cents <= 99999999999))`,
+  `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS completed_at timestamptz`,
+  `CREATE TABLE IF NOT EXISTS appointment_payments (
+     id               bigserial PRIMARY KEY,
+     appointment_id   bigint NOT NULL REFERENCES appointments(id),
+     amount_cents     bigint NOT NULL CHECK (amount_cents > 0 AND amount_cents <= 99999999999),
+     method           text NOT NULL CHECK (method IN ('cash', 'check', 'bank_transfer', 'square', 'other')),
+     paid_on          date NOT NULL,
+     income_entry_id  bigint REFERENCES income_entries(id),
+     reconcile_state  text NOT NULL DEFAULT 'none' CHECK (reconcile_state IN ('none', 'awaiting_square', 'matched')),
+     square_payment_id text CHECK (square_payment_id IS NULL OR square_payment_id ~ '^(t:)?[A-Za-z0-9_-]{1,64}$'),
+     request_key      text NOT NULL UNIQUE CHECK (request_key ~ '^[A-Za-z0-9_-]{8,64}$'),
+     created_at       timestamptz NOT NULL DEFAULT now(),
+     CHECK ((method = 'square') = (reconcile_state <> 'none')),
+     CHECK ((reconcile_state = 'awaiting_square') = (income_entry_id IS NULL)),
+     CHECK (square_payment_id IS NULL OR method = 'square')
+   )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS appointment_payments_income_uq ON appointment_payments (income_entry_id) WHERE income_entry_id IS NOT NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS appointment_payments_square_uq ON appointment_payments (square_payment_id) WHERE square_payment_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS appointment_payments_appt_idx ON appointment_payments (appointment_id)`,
+  `CREATE TABLE IF NOT EXISTS appointment_supply_uses (
+     id             bigserial PRIMARY KEY,
+     appointment_id bigint NOT NULL REFERENCES appointments(id),
+     movement_id    bigint NOT NULL UNIQUE REFERENCES inventory_movements(id),
+     created_at     timestamptz NOT NULL DEFAULT now()
+   )`,
+  `CREATE INDEX IF NOT EXISTS appointment_supply_uses_appt_idx ON appointment_supply_uses (appointment_id)`,
+  // Records one payment. Runs inside the caller's transaction, repeats of the same request_key return the first result, and an overpayment, a canceled appointment or a
+  // Square payment that is already linked is refused with a coded message (OMOF:...). Square / Card never inserts income here.
+  `CREATE OR REPLACE FUNCTION app_record_payment(p_appt bigint, p_amount bigint, p_method text, p_paid_on date, p_square text, p_key text) RETURNS bigint LANGUAGE plpgsql AS $fn$
+DECLARE
+  v_status text; v_price bigint; v_paid bigint; v_income bigint; v_state text := 'none'; v_pay bigint; v_prev bigint; v_prev_appt bigint; e income_entries%ROWTYPE;
+BEGIN
+  SELECT id, appointment_id INTO v_prev, v_prev_appt FROM appointment_payments WHERE request_key = p_key;
+  IF v_prev IS NOT NULL THEN
+    IF v_prev_appt <> p_appt THEN RAISE EXCEPTION 'OMOF:KEY_REUSED'; END IF;
+    RETURN v_prev;
+  END IF;
+  SELECT status, price_cents INTO v_status, v_price FROM appointments WHERE id = p_appt FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'OMOF:NOT_FOUND'; END IF;
+  IF v_status = 'canceled' THEN RAISE EXCEPTION 'OMOF:CANCELED'; END IF;
+  IF v_price IS NULL THEN RAISE EXCEPTION 'OMOF:NO_PRICE'; END IF;
+  IF p_amount IS NULL OR p_amount <= 0 THEN RAISE EXCEPTION 'OMOF:BAD_AMOUNT'; END IF;
+  SELECT coalesce(sum(amount_cents), 0) INTO v_paid FROM appointment_payments WHERE appointment_id = p_appt;
+  IF v_paid + p_amount > v_price THEN RAISE EXCEPTION 'OMOF:OVERPAYMENT'; END IF;
+  IF p_method = 'square' THEN
+    v_state := 'awaiting_square';
+    IF p_square IS NOT NULL THEN
+      IF EXISTS (SELECT 1 FROM appointment_payments WHERE square_payment_id = p_square) THEN RAISE EXCEPTION 'OMOF:SQUARE_ID_USED'; END IF;
+      SELECT * INTO e FROM income_entries WHERE source = 'square' AND external_id = p_square;
+      IF FOUND THEN
+        IF EXISTS (SELECT 1 FROM appointment_payments WHERE income_entry_id = e.id) THEN RAISE EXCEPTION 'OMOF:SQUARE_LINKED'; END IF;
+        IF e.gross_cents <> p_amount THEN RAISE EXCEPTION 'OMOF:SQUARE_MISMATCH'; END IF;
+        v_income := e.id; v_state := 'matched';
+      END IF;
+    END IF;
+  ELSE
+    INSERT INTO income_entries (occurred_on, source, tax_form, gross_cents) VALUES (p_paid_on, p_method, 'unknown', p_amount) RETURNING id INTO v_income;
+  END IF;
+  INSERT INTO appointment_payments (appointment_id, amount_cents, method, paid_on, income_entry_id, reconcile_state, square_payment_id, request_key)
+  VALUES (p_appt, p_amount, p_method, p_paid_on, v_income, v_state, p_square, p_key) RETURNING id INTO v_pay;
+  RETURN v_pay;
+END
+$fn$`,
+  // A payment on its own (an advance on an open appointment, or a payment against a receivable).
+  `CREATE OR REPLACE FUNCTION record_appointment_payment(p jsonb) RETURNS bigint LANGUAGE plpgsql AS $fn$
+DECLARE v_id bigint := (p->>'appointment_id')::bigint;
+BEGIN
+  PERFORM 1 FROM appointments WHERE id = v_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'OMOF:NOT_FOUND'; END IF;
+  RETURN app_record_payment(v_id, (p->>'amount_cents')::bigint, p->>'method', (p->>'paid_on')::date, p->>'square_payment_id', p->>'request_key');
+END
+$fn$`,
+  // The whole completion in ONE transaction: lock the appointment (a second click waits, then finds it completed), set the price, record the payment, take the supplies out of
+  // stock (item rows locked, a stale-stock check, and a final never-negative check), then mark it completed. Any problem raises and NOTHING is saved.
+  `CREATE OR REPLACE FUNCTION complete_appointment(p jsonb) RETURNS jsonb LANGUAGE plpgsql AS $fn$
+DECLARE
+  v_id bigint := (p->>'appointment_id')::bigint;
+  v_status text; v_price bigint; v_start timestamptz; v_paid bigint; v_pay bigint; v_mov bigint; v_item bigint;
+  s jsonb; v_n bigint; v_max bigint; v_lu bigint; v_on_hand bigint; v_moves jsonb := '[]'::jsonb;
+BEGIN
+  SELECT status, price_cents, starts_at INTO v_status, v_price, v_start FROM appointments WHERE id = v_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'OMOF:NOT_FOUND'; END IF;
+  IF v_status = 'completed' THEN RAISE EXCEPTION 'OMOF:ALREADY_COMPLETED'; END IF;
+  IF v_status NOT IN ('scheduled', 'confirmed') THEN RAISE EXCEPTION 'OMOF:NOT_OPEN'; END IF;
+  IF v_start > now() THEN RAISE EXCEPTION 'OMOF:NOT_STARTED'; END IF;
+  IF (p->>'price_cents') IS NOT NULL THEN v_price := (p->>'price_cents')::bigint; END IF;
+  IF v_price IS NULL THEN RAISE EXCEPTION 'OMOF:NO_PRICE'; END IF;
+  SELECT coalesce(sum(amount_cents), 0) INTO v_paid FROM appointment_payments WHERE appointment_id = v_id;
+  IF v_price < v_paid THEN RAISE EXCEPTION 'OMOF:PRICE_BELOW_PAID'; END IF;
+  UPDATE appointments SET price_cents = v_price WHERE id = v_id;
+  IF jsonb_typeof(p->'payment') = 'object' THEN
+    v_pay := app_record_payment(v_id, (p->'payment'->>'amount_cents')::bigint, p->'payment'->>'method', (p->'payment'->>'paid_on')::date, p->'payment'->>'square_payment_id', p->'payment'->>'request_key');
+  END IF;
+  PERFORM 1 FROM inventory_items WHERE id IN (SELECT (x->>'item_id')::bigint FROM jsonb_array_elements(coalesce(p->'supplies', '[]'::jsonb)) AS x) ORDER BY id FOR UPDATE;
+  FOR s IN SELECT x FROM jsonb_array_elements(coalesce(p->'supplies', '[]'::jsonb)) AS x LOOP
+    v_item := (s->>'item_id')::bigint;
+    SELECT count(*), coalesce(max(id), 0) INTO v_n, v_max FROM inventory_movements WHERE item_id = v_item;
+    SELECT count(*) INTO v_lu FROM inventory_lot_uses u JOIN inventory_movements m ON m.id = u.movement_id WHERE m.item_id = v_item;
+    IF v_n <> (s->'expect'->>'movements')::bigint OR v_max <> (s->'expect'->>'max_id')::bigint OR v_lu <> (s->'expect'->>'lot_uses')::bigint THEN RAISE EXCEPTION 'OMOF:STALE_INVENTORY'; END IF;
+    INSERT INTO inventory_movements (item_id, moved_on, kind, quantity) VALUES (v_item, (s->>'moved_on')::date, 'use', (s->>'quantity')::int) RETURNING id INTO v_mov;
+    INSERT INTO inventory_lot_uses (movement_id, lot_number, quantity) SELECT v_mov, a->>'lot_number', (a->>'quantity')::int FROM jsonb_array_elements(coalesce(s->'allocations', '[]'::jsonb)) AS a;
+    INSERT INTO appointment_supply_uses (appointment_id, movement_id) VALUES (v_id, v_mov);
+    SELECT coalesce(sum(CASE WHEN kind IN ('opening', 'purchase', 'adjust_up') THEN quantity ELSE -quantity END), 0) INTO v_on_hand FROM inventory_movements WHERE item_id = v_item;
+    IF v_on_hand < 0 THEN RAISE EXCEPTION 'OMOF:NEGATIVE_STOCK'; END IF;
+    v_moves := v_moves || jsonb_build_object('item_id', v_item, 'movement_id', v_mov, 'on_hand', v_on_hand);
+  END LOOP;
+  UPDATE appointments SET status = 'completed', completed_at = now(), updated_at = now() WHERE id = v_id;
+  RETURN jsonb_build_object('appointment_id', v_id, 'payment_id', v_pay, 'movements', v_moves);
+END
+$fn$`,
   `INSERT INTO app_meta (key, value) VALUES ('schema_version', '${SCHEMA_VERSION}')
    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now() WHERE app_meta.value::int < EXCLUDED.value::int`,
 ];
 
 /** Tables included in the full export, in order. */
-export const EXPORT_TABLES = ["app_meta", "tax_year_rules", "audit_log", "import_batches", "income_entries", "inventory_items", "inventory_movements", "expenses", "expense_receipts", "mileage_trips", "appointment_services", "appointments", "inventory_lot_uses", "inventory_settings", "payers", "income_entry_payers", "form_1099_entries", "tax_payments", "tax_snapshots", "accounts", "expense_category_accounts", "expense_accounts", "income_accounts", "inventory_item_accounts", "journal_entries", "journal_lines"] as const;
+export const EXPORT_TABLES = ["app_meta", "tax_year_rules", "audit_log", "import_batches", "income_entries", "inventory_items", "inventory_movements", "expenses", "expense_receipts", "mileage_trips", "appointment_services", "appointments", "appointment_payments", "appointment_supply_uses", "inventory_lot_uses", "inventory_settings", "payers", "income_entry_payers", "form_1099_entries", "tax_payments", "tax_snapshots", "accounts", "expense_category_accounts", "expense_accounts", "income_accounts", "inventory_item_accounts", "journal_entries", "journal_lines"] as const;
 export type ExportTable = (typeof EXPORT_TABLES)[number];
 
 /** Column each exported table is sorted by (every other table has an id column). */

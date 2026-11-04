@@ -37,7 +37,7 @@ export default async function Inventory({ searchParams }: { searchParams: Promis
       {sp.error && <div className="card err">{sp.error.split(" | ").map((e) => <div key={e}>{e}</div>)}</div>}
       <p className="row"><Link className="btn secondary" href="/inventory/lots">Lot lookup</Link><Link className="btn secondary" href="/inventory/report">Year-end report</Link></p>
       {alerts.length > 0 && <div className="card"><h2>Expiry</h2><ul className="plain">{alerts.map((a) => <li key={`${a.item_id}${a.lot_number}`}><Link href={`/inventory/${a.item_id}`}>{a.label}</Link> lot {a.lot_number}: {a.onHand} {a.unit}, {a.status === "expired" ? `expired ${-a.daysLeft} day${a.daysLeft === -1 ? "" : "s"} ago` : `expires in ${a.daysLeft} day${a.daysLeft === 1 ? "" : "s"}`}</li>)}</ul></div>}
-      {low.length > 0 && <div className="card"><h2>Low stock</h2><ul className="plain">{low.map((i) => <li key={i.id}><Link href={`/inventory/${i.id}`}>{i.label}</Link>: {i.stock.onHand} {i.unit} (reorder at {i.reorder_level})</li>)}</ul></div>}
+      {low.length > 0 && <div className="card"><h2>Reorder needed</h2><ul className="plain">{low.map((i) => <li key={i.id}><Link href={`/inventory/${i.id}`}>{i.label}</Link>: {i.stock.onHand} {i.unit} (reorder at {i.reorder_level})</li>)}</ul></div>}
       <div className="card tablewrap">
         <h2>Items</h2>
         {items.length === 0 ? <p className="muted">No items yet. Add one below, then record its opening stock.</p> : (
@@ -45,7 +45,7 @@ export default async function Inventory({ searchParams }: { searchParams: Promis
             <thead><tr><th>Item</th><th>Category</th><th className="num">On hand</th><th className="num">Avg cost</th><th className="num">Value</th><th>Reorder at</th></tr></thead>
             <tbody>{items.map((i) => (
               <tr key={i.id}>
-                <td><Link href={`/inventory/${i.id}`}>{i.label}</Link> {isLowStock(i.stock.onHand, i.reorder_level) && <span className="badge">low</span>}{i.error && <span className="err"> check history</span>}</td>
+                <td><Link href={`/inventory/${i.id}`}>{i.label}</Link> {isLowStock(i.stock.onHand, i.reorder_level) && <span className="badge">reorder needed</span>}{i.error && <span className="err"> check history</span>}</td>
                 <td>{i.category}</td><td className="num">{i.stock.onHand} {i.unit}</td><td className="num">{formatCents(i.stock.avgCostCents)}</td><td className="num">{formatCents(i.stock.valueCents)}</td><td>{i.reorder_level ?? "none"}</td>
               </tr>
             ))}</tbody>
