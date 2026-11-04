@@ -83,10 +83,10 @@ export default async function Taxes({ searchParams }: { searchParams: Promise<{ 
         <h2>Profit and set-aside (estimates)</h2>
         <div className="grid2">
           <div className="stat">Net after processing fees<b>{f(k.profit.netAfterFees)}</b></div>
-          <div className="stat">Expenses ({k.expenses.count}){k.vehicle?.method === "actual" ? ", including vehicle costs" : ", not including vehicle costs"}<b>{f(k.profit.expensesTotal)}</b></div>
-          {(k.vehicle?.spendingCents ?? 0) > 0 && <div className="stat">Actual vehicle spending ({k.vehicle.count}), {k.vehicle.method === "actual" ? "counted above" : "in the books, not claimed above"}<b>{f(k.vehicle.spendingCents)}</b></div>}
+          <div className="stat">Expenses counted ({k.expenses.count})<b>{f(k.profit.expensesTotal)}</b></div>
+          {(k.vehicle?.spendingCents ?? 0) > 0 && <div className="stat">Actual vehicle spending ({k.vehicle.count}): {f(k.vehicle.countedCents)} counted above{k.vehicle.parkingTollsCents > 0 ? ` (parking and tolls ${f(k.vehicle.parkingTollsCents)} included)` : ""}, {f(k.vehicle.notCountedCents)} in the books only<b>{f(k.vehicle.spendingCents)}</b></div>}
           <div className="stat">Estimated profit, before taxes and mileage deduction<b>{k.profit.estimatedProfit === null ? "no expenses entered" : f(k.profit.estimatedProfit)}</b></div>
-          <div className="stat">Mileage ({formatMiles(k.mileage.miles_tenths)} mi)<b>{k.mileage.deductionCents === null ? "rate not set" : f(k.mileage.deductionCents)}{k.mileage.deductionCents !== null && !k.mileage.confirmed ? " (not confirmed)" : ""}</b></div>
+          <div className="stat">Mileage ({formatMiles(k.mileage.miles_tenths)} mi)<b>{k.mileage.applies === false ? "not applied (actual expenses)" : k.mileage.deductionCents === null ? "rate not set" : f(k.mileage.deductionCents)}{k.mileage.deductionCents !== null && !k.mileage.confirmed ? " (not confirmed)" : ""}</b></div>
           <div className="stat">Set aside ({k.rules.set_aside_percent === null ? "no" : k.rules.set_aside_percent}%)<b>{k.setAside.amountCents === null ? (k.setAside.status === "percent_not_set" ? "percent not set" : k.setAside.status === "percent_not_confirmed" ? "percent not confirmed" : "no profit estimate") : f(k.setAside.amountCents)}</b></div>
           <div className="stat">Tax payments recorded<b>{f(k.setAside.paidCents)}</b></div>
           {k.setAside.remainingCents !== null && <div className="stat">Still to set aside<b>{f(k.setAside.remainingCents)}</b></div>}

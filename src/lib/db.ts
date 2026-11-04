@@ -10,8 +10,8 @@ import type { ItemInput, Movement, MovementInput } from "./inventory";
 import { replay, checkAdd, type Stock } from "./inventory";
 import { checkLotConsistency, expiryAlerts, inventoryReport, lotBalances, suggestAllocation, validateAllocation, type LotUse } from "./lots";
 import type { PacketInput } from "./packet";
-import type { PlannedItem, ServiceInput, SpendRow, TaxMethod, VehicleExpenseInput } from "./vehicles";
-import { isTaxMethod, VEHICLE_EXPENSE_CATEGORY } from "./vehicles";
+import type { PlannedItem, ServiceInput, SpendRow, TaxMethod, VehicleExpenseInput, VehicleTaxRule } from "./vehicles";
+import { isTaxMethod, STANDARD_RULE, VEHICLE_EXPENSE_CATEGORY } from "./vehicles";
 
 /** Neon over HTTP: one statement per query, no connection to keep open. Only used after requireOwner(). */
 export const databaseConfigured = (): boolean => Boolean(process.env.DATABASE_URL);
@@ -452,17 +452,31 @@ export async function deleteMaintenance(id: number): Promise<void> {
   await audit("delete_maintenance", { id });
 }
 
-export async function listVehicleMethods(): Promise<Record<number, TaxMethod>> {
-  const rows = await sql()`SELECT tax_year, method FROM vehicle_tax_method`;
-  const out: Record<number, TaxMethod> = {};
-  for (const r of rows) if (isTaxMethod(r.method)) out[Number(r.tax_year)] = r.method;
+/** The year's vehicle tax rule. No row = standard mileage. */
+export async function listVehicleRules(): Promise<Record<number, VehicleTaxRule>> {
+  const rows = await sql()`SELECT tax_year, method, business_use_percent, business_use_confirmed FROM vehicle_tax_method`;
+  const out: Record<number, VehicleTaxRule> = {};
+  for (const r of rows) if (isTaxMethod(r.method)) out[Number(r.tax_year)] = { method: r.method, businessUsePercent: r.business_use_percent === null ? null : Number(r.business_use_percent), businessUseConfirmed: r.business_use_confirmed === true || r.business_use_confirmed === "t" || r.business_use_confirmed === "true" };
   return out;
 }
-export async function setVehicleMethod(year: number, method: TaxMethod): Promise<void> {
-  await sql()`INSERT INTO vehicle_tax_method (tax_year, method) VALUES (${year}, ${method})
-    ON CONFLICT (tax_year) DO UPDATE SET method = EXCLUDED.method, updated_at = now()`;
-  await audit("set_vehicle_method", { tax_year: year, kind: method });
+export const ruleFor = (rules: Record<number, VehicleTaxRule>, year: number): VehicleTaxRule => rules[year] ?? STANDARD_RULE;
+
+/** Saves the year's choice. A percentage can only be marked confirmed once it exists; the stored percentage is kept when switching methods (it is just not used under standard mileage). */
+export async function setVehicleRule(year: number, rule: VehicleTaxRule): Promise<void> {
+  const confirmed = rule.businessUsePercent !== null && rule.businessUseConfirmed;
+  await sql()`INSERT INTO vehicle_tax_method (tax_year, method, business_use_percent, business_use_confirmed) VALUES (${year}, ${rule.method}, ${rule.businessUsePercent}, ${confirmed})
+    ON CONFLICT (tax_year) DO UPDATE SET method = EXCLUDED.method, business_use_percent = EXCLUDED.business_use_percent, business_use_confirmed = EXCLUDED.business_use_confirmed, updated_at = now()`;
+  await audit("set_vehicle_method", { tax_year: year, kind: rule.method });
 }
+
+/** Which kind of vehicle cost each expense is (parking_tolls, fuel, ...), so tax estimates can tell them apart. Expenses with no detail row are simply absent. */
+export async function vehicleCategoryMap(from: string, to: string): Promise<Map<number, string>> {
+  const rows = await sql()`SELECT d.expense_id, d.vehicle_category FROM vehicle_expense_details d JOIN expenses e ON e.id = d.expense_id WHERE e.spent_on BETWEEN ${from}::date AND ${to}::date`;
+  return new Map(rows.map((r) => [Number(r.expense_id), r.vehicle_category as string]));
+}
+export const withVehicleCategories = <T extends { id: number }>(list: readonly T[], map: Map<number, string>): (T & { vehicle_category?: string })[] =>
+  list.map((e) => (map.has(e.id) ? { ...e, vehicle_category: map.get(e.id) } : e));
+
 
 export async function countReceipts(expenseId: number): Promise<number> {
   return Number((await sql()`SELECT count(*) AS n FROM expense_receipts WHERE expense_id = ${expenseId}`)[0].n);
@@ -625,8 +639,10 @@ export async function loadPacketInput(year: number, today: string): Promise<Pack
   ]);
   const items = await listItems(movements);
   const expired = expiryAlerts(items, movements, uses, warn, today).filter((a) => a.status === "expired").length;
-  const vehicleMethod = ((await schemaVersion()) ?? 0) >= 10 ? (await listVehicleMethods())[year] ?? "standard_mileage" : "standard_mileage";
-  return { year, income, expenses, trips, rules, forms, payers, payments, inventory: inventoryReport(items, movements, from, to), expiredLots: expired, lastImportRefunds: refunds?.n ?? 0, vehicleMethod };
+  const hasVehicles = ((await schemaVersion()) ?? 0) >= 11;
+  const vehicleRule = hasVehicles ? ruleFor(await listVehicleRules(), year) : STANDARD_RULE;
+  const taggedExpenses = hasVehicles ? withVehicleCategories(expenses, await vehicleCategoryMap(from, to)) : expenses;
+  return { year, income, expenses: taggedExpenses, trips, rules, forms, payers, payments, inventory: inventoryReport(items, movements, from, to), expiredLots: expired, lastImportRefunds: refunds?.n ?? 0, vehicleRule };
 }
 
 // ---- Phase 5: whole-year lists that must never be silently cut short, and the activity log ----

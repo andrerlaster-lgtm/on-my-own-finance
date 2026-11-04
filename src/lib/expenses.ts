@@ -22,7 +22,7 @@ export const CATEGORIES = [
 export type Category = (typeof CATEGORIES)[number]["id"];
 export const CATEGORY_LABELS: Record<string, string> = Object.fromEntries(CATEGORIES.map((c) => [c.id, c.label]));
 
-export interface Expense { id: number; spent_on: string; amount_cents: number; category: Category; vendor: string | null; receipt_on_file: boolean; photos: number }
+export interface Expense { id: number; spent_on: string; amount_cents: number; category: Category; vendor: string | null; receipt_on_file: boolean; photos: number; /** Only set for vehicle costs (from the Vehicles detail row): fuel, parking_tolls, ... */ vehicle_category?: string | null }
 export interface ExpenseInput { spent_on: string; amount_cents: number; category: Category; vendor: string | null; receipt_on_file: boolean }
 
 /** A business name: letters, digits, spaces and . , & ' - # / only; no long digit runs (card numbers) and no @. */

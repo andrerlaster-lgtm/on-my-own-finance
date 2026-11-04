@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireOwner } from "@/lib/auth";
-import { databaseConfigured, databaseReady, schemaVersion, runSetup, listIncomeAll, lastImportRefunds, listItems, listExpensesAll, listTripsAll, getRules, listMovements, listLotUses, warnDaysByItem, listPayments, purgePendingTrips, listVehicleMethods } from "@/lib/db";
+import { databaseConfigured, databaseReady, schemaVersion, runSetup, listIncomeAll, lastImportRefunds, listItems, listExpensesAll, listTripsAll, getRules, listMovements, listLotUses, warnDaysByItem, listPayments, purgePendingTrips, listVehicleRules, ruleFor, vehicleCategoryMap, withVehicleCategories } from "@/lib/db";
 import { setAside } from "@/lib/taxforms";
 import { expiryAlerts, type LotUse } from "@/lib/lots";
 import type { Movement } from "@/lib/inventory";
@@ -52,10 +52,12 @@ export default async function Home() {
   const allItems = dash ? await listItems(movements as Movement[]) : [];
   const low = allItems.filter((i) => isLowStock(i.stock.onHand, i.reorder_level));
   const expiring = v >= 4 ? expiryAlerts(allItems, movements as Movement[], lotUses as LotUse[], warn as Map<number, number>, today) : [];
-  // Tax estimates leave actual vehicle costs out unless the year uses "actual expenses" (the books and reports always include them).
-  const vehicleMethods = dash && full && v >= 10 ? await listVehicleMethods() : {};
-  const methodFor = (y: number) => (vehicleMethods as Record<number, "standard_mileage" | "actual">)[y] ?? "standard_mileage";
-  const taxExps = taxExpenses(exps as Expense[], methodFor);
+  // Tax estimates follow each year's vehicle rule (parking and tolls always; other vehicle costs only as a confirmed business-use share under "actual expenses").
+  // The books and reports always carry every cost in full.
+  const vehicleRules = dash && full && v >= 11 ? await listVehicleRules() : {};
+  const ruleOf = (y: number) => ruleFor(vehicleRules, y);
+  const allExps = v >= 11 && full ? withVehicleCategories(exps as Expense[], await vehicleCategoryMap(wideFrom, wideTo)) : (exps as Expense[]);
+  const taxExps = taxExpenses(allExps, ruleOf);
   const rates: Record<number, RateInfo> = {};
   years.forEach((y, i) => { const r = rateRules[i]; if (r) rates[y] = { centsPerMile: r.mileage_rate_cents, confirmed: r.mileage_rate_confirmed, h2CentsPerMile: r.mileage_rate_h2_cents, h2Confirmed: r.mileage_rate_h2_confirmed }; });
   const cols = [["This week", periods.week], ["This month", periods.month], ["This year", periods.year]] as const;
@@ -123,16 +125,16 @@ export default async function Home() {
                   <div className="stat">Net after processing fees, before expenses<b>{formatCents(t.netAfterFees)}</b></div>
                 </div>
                 {full && (() => {
-                  const ex = summarizeExpenses(taxExps, range), veh = summarizeExpenses((exps as Expense[]).filter((e) => isVehicleCost(e) && methodFor(Number(e.spent_on.slice(0, 4))) !== "actual"), range), profit = estimateProfit(t.netAfterFees, ex), mi = mileageSummary(trips, range, rates);
+                  const ex = summarizeExpenses(taxExps, range), vehAll = summarizeExpenses(allExps.filter(isVehicleCost), range), vehCounted = summarizeExpenses(taxExps.filter(isVehicleCost), range), veh = { total: vehAll.total - vehCounted.total }, actualYear = ruleOf(Number(range.to.slice(0, 4))).method === "actual", profit = estimateProfit(t.netAfterFees, ex), mi = mileageSummary(trips, range, rates);
                   return (
                     <>
                       <div className="grid2" style={{ marginTop: 8 }}>
                         <div className="stat">Expenses ({ex.count})<b>{formatCents(ex.total)}</b></div>
                         <div className="stat">Estimated profit, before taxes and before the mileage deduction<b>{profit === null ? "no expenses entered" : formatCents(profit)}</b></div>
                         <div className="stat">Miles ({mi.trips} trip{mi.trips === 1 ? "" : "s"})<b>{formatMiles(mi.miles_tenths)}</b></div>
-                        <div className="stat">Mileage deduction estimate<b>{mi.ratesMissing ? "rate not set" : formatCents(mi.deductionCents)}</b></div>
+                        <div className="stat">Mileage deduction estimate<b>{actualYear ? "not applied (actual expenses)" : mi.ratesMissing ? "rate not set" : formatCents(mi.deductionCents)}</b></div>
                       </div>
-                      {veh.total > 0 && <p className="muted">Vehicle spending of {formatCents(veh.total)} is in the books (see <Link href="/vehicles">Vehicles</Link>) but not counted in the expenses and profit above, because the standard mileage rate is used.</p>}
+                      {veh.total > 0 && <p className="muted">{formatCents(veh.total)} of vehicle spending is in the books (see <Link href="/vehicles">Vehicles</Link>) but not counted in the expenses and profit above (parking and tolls are counted). See Vehicles for how the year is treated.</p>}
                       {(profit === null || mi.unconfirmed) && <p className="muted">{profit === null ? "Profit is only estimated once this period has at least one expense entry. " : ""}{mi.unconfirmed ? "The mileage rate is not confirmed with your preparer." : ""}</p>}
                     </>
                   );

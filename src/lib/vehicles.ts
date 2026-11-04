@@ -8,10 +8,9 @@ import type { ExpenseInput } from "./expenses";
  * Because it is ONE expense row, the ledger (which is calculated from expense rows) posts it exactly once, and receipts, backups and exports
  * work as they already do.
  *
- * Books vs. taxes: the ledger and the Profit & Loss show what was actually spent. Tax estimates (dashboard profit, set-aside, year-end packet)
- * leave vehicle costs OUT while the year's method is the standard mileage rate, because that rate already covers fuel, repairs and so on.
- * They are counted only if the year is switched to "actual expenses" (and then the mileage deduction must not also be claimed; this app does
- * not track business-use percentage, so the preparer decides). Nothing here is tax advice.
+ * Books vs. taxes: the ledger and the Profit & Loss show what was actually spent, in full. Tax estimates (dashboard profit, set-aside, year-end packet)
+ * follow the year's rule below: parking and tolls are always counted; other vehicle costs only under "actual expenses" with a confirmed business-use
+ * percentage; and under actual expenses the mileage deduction is not applied. Nothing here is tax advice.
  *
  * Upcoming maintenance and its estimated cost live only in vehicle_maintenance. Nothing reads them into the ledger; only a paid expense does.
  * No plate, VIN, driver, patient or address fields exist. Vehicle labels and service titles are short plain text.
@@ -30,28 +29,71 @@ export type VehicleCategory = (typeof VEHICLE_CATEGORIES)[number]["id"];
 export const VEHICLE_CATEGORY_LABELS: Record<string, string> = Object.fromEntries(VEHICLE_CATEGORIES.map((c) => [c.id, c.label]));
 
 export const TAX_METHODS = [
-  { id: "standard_mileage", label: "Standard mileage rate (vehicle costs are not claimed)" },
-  { id: "actual", label: "Actual expenses (vehicle costs are counted; do not also claim mileage)" },
+  { id: "standard_mileage", label: "Standard mileage rate (fuel, service, repairs, tires, insurance not counted; parking and tolls are)" },
+  { id: "actual", label: "Actual expenses (business-use share of costs counted; mileage deduction not applied)" },
 ] as const;
 export type TaxMethod = (typeof TAX_METHODS)[number]["id"];
 export const isTaxMethod = (v: unknown): v is TaxMethod => v === "standard_mileage" || v === "actual";
 
 export const isVehicleCost = (e: { category: string }): boolean => e.category === VEHICLE_EXPENSE_CATEGORY;
 
-/** Expenses that tax estimates may use: vehicle costs are left out unless that year's method is "actual". Pure; the books are untouched. */
-export function taxExpenses<T extends { category: string; spent_on: string }>(list: readonly T[], methodFor: (year: number) => TaxMethod): T[] {
-  return list.filter((e) => !isVehicleCost(e) || methodFor(Number(e.spent_on.slice(0, 4))) === "actual");
+/**
+ * How a year's vehicle costs are treated in tax ESTIMATES (the books always carry every cost at its full amount):
+ *  - Parking and tolls are counted in full under EITHER method. They are separate from the mileage rate and stay separately identifiable.
+ *  - Under standard mileage, every other vehicle cost (fuel, service, repairs, tires, insurance) is left out: the rate already covers them.
+ *  - Under actual expenses, those other costs are counted only after a business-use percentage is entered AND confirmed with the preparer, and
+ *    only that percentage of each cost is counted. With no confirmed percentage they are not counted at all. The mileage deduction is not applied.
+ */
+export interface VehicleTaxRule { method: TaxMethod; businessUsePercent: number | null; businessUseConfirmed: boolean }
+export const STANDARD_RULE: VehicleTaxRule = { method: "standard_mileage", businessUsePercent: null, businessUseConfirmed: false };
+export type AllocationStatus = "standard" | "needs_percent" | "needs_confirmation" | "applied";
+
+export function allocationStatus(r: VehicleTaxRule): AllocationStatus {
+  if (r.method !== "actual") return "standard";
+  if (r.businessUsePercent === null) return "needs_percent";
+  return r.businessUseConfirmed ? "applied" : "needs_confirmation";
+}
+export const parseBusinessUse = (raw: string | undefined): number | null | "bad" => {
+  const s = (raw ?? "").trim();
+  if (s === "") return null;
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(s) || Number(s) > 100) return "bad";
+  return Number(s);
+};
+/** The business-use share of an amount, in whole cents (percent has at most two decimals). */
+export const allocate = (amountCents: number, percent: number): number => Math.round((amountCents * Math.round(percent * 100)) / 10000);
+
+export const isParkingTolls = (e: { category: string; vehicle_category?: string | null }): boolean => isVehicleCost(e) && e.vehicle_category === "parking_tolls";
+
+/** Cents of one vehicle cost that tax estimates may use under a rule. */
+export function countedCents(amountCents: number, vehicleCategory: string | null | undefined, rule: VehicleTaxRule): number {
+  if (vehicleCategory === "parking_tolls") return amountCents;
+  return allocationStatus(rule) === "applied" ? allocate(amountCents, rule.businessUsePercent as number) : 0;
 }
 
-/** What counts where, for one year. */
-export function taxTreatment(method: TaxMethod, actualSpendingCents: number, mileageDeductionCents: number | null) {
+/** Expenses that tax estimates may use. Vehicle rows are kept (at their counted amount) or dropped; everything else passes through untouched. The books are never changed. */
+export function taxExpenses<T extends { category: string; spent_on: string; amount_cents: number; vehicle_category?: string | null }>(list: readonly T[], ruleFor: (year: number) => VehicleTaxRule): T[] {
+  const out: T[] = [];
+  for (const e of list) {
+    if (!isVehicleCost(e)) { out.push(e); continue; }
+    const c = countedCents(e.amount_cents, e.vehicle_category, ruleFor(Number(e.spent_on.slice(0, 4))));
+    if (c > 0) out.push(c === e.amount_cents ? e : { ...e, amount_cents: c });
+  }
+  return out;
+}
+
+/** Actual vehicle spending vs. what tax estimates use, for one year's vehicle costs and rule. Spending is never reduced. */
+export function vehicleTaxSummary(rows: readonly { amount_cents: number; vehicle_category?: string | null }[], rule: VehicleTaxRule) {
+  let spending = 0, counted = 0, parkingTolls = 0;
+  for (const r of rows) { spending += r.amount_cents; counted += countedCents(r.amount_cents, r.vehicle_category, rule); if (r.vehicle_category === "parking_tolls") parkingTolls += r.amount_cents; }
+  const status = allocationStatus(rule);
   return {
-    method,
-    actualSpendingCents,
-    countedInTaxEstimatesCents: method === "actual" ? actualSpendingCents : 0,
-    notClaimedCents: method === "actual" ? 0 : actualSpendingCents,
-    mileageDeductionCents: method === "standard_mileage" ? mileageDeductionCents : null, // not applied under "actual"
-    warning: method === "actual" ? "Actual expenses selected: do not also claim the mileage deduction. Business-use percentage is not tracked here; your preparer decides what is deductible." : null,
+    method: rule.method, allocation: status, businessUsePercent: rule.businessUsePercent, businessUseConfirmed: rule.businessUseConfirmed,
+    actualSpendingCents: spending, parkingTollsCents: parkingTolls, countedInTaxEstimatesCents: counted, notCountedCents: spending - counted,
+    mileageApplies: rule.method === "standard_mileage",
+    warning: rule.method !== "actual" ? null : status === "applied"
+      ? `Actual expenses: ${rule.businessUsePercent}% business use applied to fuel, service, repairs, tires and insurance. The mileage deduction is not applied. Your preparer decides what is deductible.`
+      : status === "needs_percent" ? "Actual expenses is selected but no business-use percentage is entered, so these costs are not counted yet (parking and tolls still are). The mileage deduction is not applied."
+      : "The business-use percentage is entered but not confirmed with your preparer, so these costs are not counted yet (parking and tolls still are). The mileage deduction is not applied.",
   };
 }
 

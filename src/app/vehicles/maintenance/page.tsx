@@ -56,7 +56,7 @@ const STATUS_TEXT = { overdue: "Overdue", due_soon: "Due soon", upcoming: "Upcom
 export default async function Maintenance({ searchParams }: { searchParams: Promise<{ error?: string; saved?: string }> }) {
   await requireOwner();
   if (!(await databaseReady())) redirect("/");
-  if (((await schemaVersion()) ?? 0) < 10) redirect("/vehicles");
+  if (((await schemaVersion()) ?? 0) < 11) redirect("/vehicles");
   const sp = await searchParams;
   const today = todayInChicago();
   const [vehicles, items, odos] = await Promise.all([listVehicles(), listMaintenance(), latestOdometers()]);

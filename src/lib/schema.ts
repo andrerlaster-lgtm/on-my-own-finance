@@ -1,9 +1,9 @@
 /*
- * Database schema (version 10). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS, ADD COLUMN IF NOT EXISTS and
+ * Database schema (version 11). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS, ADD COLUMN IF NOT EXISTS and
  * ON CONFLICT only. Nothing here drops or rewrites data. Privacy rule: no column may hold a client or patient's name,
  * contact details, birth date or health information (tests/schema.test.cjs checks the column names).
  */
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 export const schemaStatements: string[] = [
   `CREATE TABLE IF NOT EXISTS app_meta (
@@ -235,9 +235,13 @@ export const schemaStatements: string[] = [
   // ---- version 9: a "Vehicle expenses" category (id vehicle_fuel). The ONE exception to "additive only": the expenses.category CHECK list must be widened,
   // so it is replaced in a single atomic ALTER (no rows are read, changed or removed; every existing category stays allowed). The account is added only to a chart that already exists. ----
   `ALTER TABLE expenses DROP CONSTRAINT IF EXISTS expenses_category_check, ADD CONSTRAINT expenses_category_check CHECK (category IN ('supplies', 'insurance', 'licenses_fees', 'equipment', 'software', 'advertising', 'professional_services', 'phone_internet', 'training', 'vehicle_fuel', 'other'))`,
+  // The vehicle account goes on number 6110, or on the first free number after it (multiples of 10 first) if a custom account already uses 6110. It is never skipped
+  // because of a number clash, and no existing account is changed. Added only to a chart that already exists (a new chart is seeded by the app).
   `INSERT INTO accounts (number, label, type, normal, system_key)
-   SELECT 6110, 'Vehicle expenses', 'operating_expense', 'debit', 'cat:vehicle_fuel'
-   WHERE EXISTS (SELECT 1 FROM accounts) AND NOT EXISTS (SELECT 1 FROM accounts WHERE system_key = 'cat:vehicle_fuel' OR number = 6110)`,
+   SELECT (SELECT n FROM generate_series(6110, 6899) AS n WHERE NOT EXISTS (SELECT 1 FROM accounts WHERE number = n) ORDER BY (n % 10 <> 0), n LIMIT 1),
+          'Vehicle expenses', 'operating_expense', 'debit', 'cat:vehicle_fuel'
+   WHERE EXISTS (SELECT 1 FROM accounts) AND NOT EXISTS (SELECT 1 FROM accounts WHERE system_key = 'cat:vehicle_fuel')
+     AND EXISTS (SELECT 1 FROM generate_series(6110, 6899) AS n WHERE NOT EXISTS (SELECT 1 FROM accounts WHERE number = n))`,
   // ---- version 10: vehicles. Only NEW tables (nothing existing is altered). A vehicle cost is an ordinary expenses row (category vehicle_fuel) plus one
   // detail row here, so the ledger posts it once. Estimated upcoming maintenance lives only in vehicle_maintenance and is never posted. No plate, VIN or driver columns by design. ----
   `CREATE TABLE IF NOT EXISTS vehicles (
@@ -275,6 +279,9 @@ export const schemaStatements: string[] = [
      method     text NOT NULL CHECK (method IN ('standard_mileage', 'actual')),
      updated_at timestamptz NOT NULL DEFAULT now()
    )`,
+  // ---- version 11: business-use allocation for the "actual expenses" choice (the percentage, and whether it was confirmed with the preparer). Two new columns only. ----
+  `ALTER TABLE vehicle_tax_method ADD COLUMN IF NOT EXISTS business_use_percent numeric(5,2) CHECK (business_use_percent IS NULL OR (business_use_percent >= 0 AND business_use_percent <= 100))`,
+  `ALTER TABLE vehicle_tax_method ADD COLUMN IF NOT EXISTS business_use_confirmed boolean NOT NULL DEFAULT false`,
   `INSERT INTO app_meta (key, value) VALUES ('schema_version', '${SCHEMA_VERSION}')
    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now() WHERE app_meta.value::int < EXCLUDED.value::int`,
 ];

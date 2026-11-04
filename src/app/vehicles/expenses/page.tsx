@@ -55,7 +55,7 @@ async function remove(fd: FormData) {
 export default async function VehicleExpenses({ searchParams }: { searchParams: Promise<{ error?: string; saved?: string; rows?: string }> }) {
   await requireOwner();
   if (!(await databaseReady())) redirect("/");
-  if (((await schemaVersion()) ?? 0) < 10) redirect("/vehicles");
+  if (((await schemaVersion()) ?? 0) < 11) redirect("/vehicles");
   const sp = await searchParams;
   const today = todayInChicago(), p = periodRanges(today);
   const [vehicles, list] = await Promise.all([listVehicles(), listVehicleExpenses(p.year.from, p.year.to, 50_001)]);

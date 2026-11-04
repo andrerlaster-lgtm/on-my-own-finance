@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireOwner } from "@/lib/auth";
-import { databaseReady, schemaVersion, listVehicles, addVehicle, setVehicleActive, listVehicleExpenses, toSpendRow, listMaintenance, latestOdometers, listVehicleMethods, setVehicleMethod, listTripsAll, getRules } from "@/lib/db";
-import { VEHICLE_CATEGORIES, TAX_METHODS, isTaxMethod, dueStatus, monthlyTotals, monthRange, parseVehicleForm, plannedEstimateTotal, spendingTotals, taxTreatment } from "@/lib/vehicles";
+import { databaseReady, schemaVersion, listVehicles, addVehicle, setVehicleActive, listVehicleExpenses, toSpendRow, listMaintenance, latestOdometers, listVehicleRules, ruleFor, setVehicleRule, listTripsAll, getRules } from "@/lib/db";
+import { VEHICLE_CATEGORIES, TAX_METHODS, isTaxMethod, parseBusinessUse, vehicleTaxSummary, dueStatus, monthlyTotals, monthRange, parseVehicleForm, plannedEstimateTotal, spendingTotals } from "@/lib/vehicles";
 import { mileageSummary, type RateInfo } from "@/lib/mileage";
 import { formatCents } from "@/lib/money";
 import { todayInChicago } from "@/lib/dates";
@@ -31,20 +31,22 @@ async function chooseMethod(fd: FormData) {
   "use server";
   await requireOwner();
   const year = Number(fd.get("year")), method = fd.get("method");
-  if (Number.isInteger(year) && year >= 2000 && year <= 2100 && isTaxMethod(method)) await setVehicleMethod(year, method);
+  const pct = parseBusinessUse(String(fd.get("business_use") ?? ""));
+  if (pct === "bad") return back(`?year=${year}&error=${encodeURIComponent("Business-use percentage: a number from 0 to 100 with at most two decimals, or leave empty.")}`);
+  if (Number.isInteger(year) && year >= 2000 && year <= 2100 && isTaxMethod(method)) await setVehicleRule(year, { method, businessUsePercent: pct, businessUseConfirmed: fd.get("business_use_confirmed") === "on" });
   back(`?year=${year}&saved=1`);
 }
 
 export default async function Vehicles({ searchParams }: { searchParams: Promise<{ year?: string; month?: string; error?: string; saved?: string }> }) {
   await requireOwner();
   if (!(await databaseReady())) redirect("/");
-  if (((await schemaVersion()) ?? 0) < 10) return <main><h1>Vehicles</h1><div className="note">The database needs a one-time update first. Press <b>Update</b> on the home page, then come back.</div><p><Link href="/">← Home</Link></p></main>;
+  if (((await schemaVersion()) ?? 0) < 11) return <main><h1>Vehicles</h1><div className="note">The database needs a one-time update first. Press <b>Update</b> on the home page, then come back.</div><p><Link href="/">← Home</Link></p></main>;
   const sp = await searchParams;
   const today = todayInChicago(), thisYear = Number(today.slice(0, 4));
   const year = /^\d{4}$/.test(sp.year ?? "") && Number(sp.year) >= 2000 && Number(sp.year) <= 2100 ? Number(sp.year) : thisYear;
   const month = /^(0?[1-9]|1[0-2])$/.test(sp.month ?? "") ? Number(sp.month) : year === thisYear ? Number(today.slice(5, 7)) : 12;
-  const [vehicles, spend, plans, odos, methods, trips, rules] = await Promise.all([
-    listVehicles(), listVehicleExpenses(`${year}-01-01`, `${year}-12-31`, 50_001), listMaintenance(), latestOdometers(), listVehicleMethods(),
+  const [vehicles, spend, plans, odos, vehicleRules, trips, rules] = await Promise.all([
+    listVehicles(), listVehicleExpenses(`${year}-01-01`, `${year}-12-31`, 50_001), listMaintenance(), latestOdometers(), listVehicleRules(),
     listTripsAll(`${year}-01-01`, `${year}-12-31`), getRules(year),
   ]);
   if (spend.length > 50_000) throw new Error("Too many vehicle expenses to show at once.");
@@ -52,10 +54,10 @@ export default async function Vehicles({ searchParams }: { searchParams: Promise
   const label = (id: number) => vehicles.find((v) => v.id === id)?.label ?? `Vehicle ${id}`;
   const yr = spendingTotals(rows, { from: `${year}-01-01`, to: `${year}-12-31` }), mo = spendingTotals(rows, monthRange(year, month));
   const byMonth = monthlyTotals(rows, year);
-  const method = methods[year] ?? "standard_mileage";
+  const rule = ruleFor(vehicleRules, year), method = rule.method;
   const rate: RateInfo = { centsPerMile: rules.mileage_rate_cents, confirmed: rules.mileage_rate_confirmed, h2CentsPerMile: rules.mileage_rate_h2_cents, h2Confirmed: rules.mileage_rate_h2_confirmed };
   const mi = mileageSummary(trips, { from: `${year}-01-01`, to: `${year}-12-31` }, { [year]: rate });
-  const treat = taxTreatment(method, yr.total, rules.mileage_rate_cents === null ? null : mi.deductionCents);
+  const treat = vehicleTaxSummary(spend.map((e) => ({ amount_cents: e.amount_cents, vehicle_category: e.vehicle_category })), rule);
   const planned = plans.filter((p) => p.status === "planned");
   const dueNow = planned.filter((p) => dueStatus(p, today, odos.get(p.vehicle_id) ?? null) !== "upcoming");
   const catRows = (t: typeof yr) => VEHICLE_CATEGORIES.map((c) => ({ c, total: t.byCategory.find((x) => x.id === c.id)?.total ?? 0 }));
@@ -111,15 +113,19 @@ export default async function Vehicles({ searchParams }: { searchParams: Promise
         <div className="grid2">
           <div className="stat">Actual vehicle spending (in the books)<b>{formatCents(treat.actualSpendingCents)}</b></div>
           <div className="stat">Counted in tax estimates<b>{formatCents(treat.countedInTaxEstimatesCents)}</b></div>
-          <div className="stat">Not claimed (covered by the mileage rate)<b>{formatCents(treat.notClaimedCents)}</b></div>
-          <div className="stat">Mileage deduction estimate<b>{method === "actual" ? "not used" : rules.mileage_rate_cents === null ? "rate not set" : formatCents(mi.deductionCents)}</b></div>
+          <div className="stat">Of which parking and tolls (counted either way)<b>{formatCents(treat.parkingTollsCents)}</b></div>
+          <div className="stat">Not counted in tax estimates<b>{formatCents(treat.notCountedCents)}</b></div>
+          <div className="stat">Mileage deduction estimate<b>{method === "actual" ? "not applied (records kept)" : rules.mileage_rate_cents === null ? "rate not set" : formatCents(mi.deductionCents)}</b></div>
         </div>
         {treat.warning && <div className="note" style={{ marginTop: 10 }}>{treat.warning}</div>}
         <form action={chooseMethod}>
           <input type="hidden" name="year" value={year} />
           <label htmlFor="meth">How are vehicle costs handled in tax estimates for {year}?</label>
           <select id="meth" name="method" defaultValue={method}>{TAX_METHODS.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}</select>
-          <p className="muted">This only changes the estimates (dashboard profit, set-aside, year-end packet). The books and reports always show actual spending. Confirm the choice with your preparer.</p>
+          <label htmlFor="bu">Business-use percentage (used only with actual expenses)</label>
+          <input id="bu" name="business_use" type="text" inputMode="decimal" placeholder="for example 85" defaultValue={rule.businessUsePercent ?? ""} style={{ maxWidth: 140 }} />
+          <label className="check"><input type="checkbox" name="business_use_confirmed" defaultChecked={rule.businessUseConfirmed} /> My tax preparer confirmed this percentage</label>
+          <p className="muted">Standard mileage: fuel, service, repairs, tires and insurance are not counted (the rate covers them); parking and tolls are. Actual expenses: only the confirmed business-use share of those costs is counted, nothing is counted until the percentage is entered and confirmed, and the mileage deduction is not applied (your mileage records stay as they are). Tick the box only after your preparer has confirmed the percentage you entered. This only changes tax estimates (dashboard profit, set-aside, year-end packet); the books and reports always show every cost in full.</p>
           <p><SubmitButton className="btn secondary">Save choice</SubmitButton></p>
         </form>
       </div>

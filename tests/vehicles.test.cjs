@@ -82,37 +82,69 @@ test("monthly and yearly totals, by vehicle and by category", () => {
 });
 
 // ---------- actual spending vs tax-deductible ----------
-const exp = (id, on, category, amount) => ({ id, spent_on: on, amount_cents: amount, category, vendor: null, receipt_on_file: false, photos: 0 });
-test("tax estimates leave vehicle costs out under the standard mileage rate, and count them only for years set to actual", () => {
-  const list = [exp(1, "2026-03-01", "supplies", 5000), exp(2, "2026-03-02", "vehicle_fuel", 4000), exp(3, "2025-03-02", "vehicle_fuel", 700)];
-  assert.deepEqual(V.taxExpenses(list, () => "standard_mileage").map((e) => e.id), [1], "standard: fuel and repairs are not claimed on top of the mileage rate");
-  assert.deepEqual(V.taxExpenses(list, () => "actual").map((e) => e.id), [1, 2, 3]);
-  assert.deepEqual(V.taxExpenses(list, (y) => (y === 2026 ? "actual" : "standard_mileage")).map((e) => e.id), [1, 2], "the choice is per tax year");
-  assert.equal(V.isVehicleCost({ category: "supplies" }), false);
-  const t = V.taxTreatment("standard_mileage", 40000, 12000);
-  assert.deepEqual([t.actualSpendingCents, t.countedInTaxEstimatesCents, t.notClaimedCents, t.mileageDeductionCents, t.warning], [40000, 0, 40000, 12000, null]);
-  const a = V.taxTreatment("actual", 40000, 12000);
-  assert.deepEqual([a.countedInTaxEstimatesCents, a.notClaimedCents, a.mileageDeductionCents], [40000, 0, null], "actual: the mileage deduction is not used");
-  assert.match(a.warning, /do not also claim the mileage deduction/i);
+const exp = (id, on, category, amount, vc) => ({ id, spent_on: on, amount_cents: amount, category, vendor: null, receipt_on_file: false, photos: 0, ...(vc ? { vehicle_category: vc } : {}) });
+const STD = V.STANDARD_RULE, act = (pct, confirmed) => ({ method: "actual", businessUsePercent: pct, businessUseConfirmed: confirmed });
+test("parking and tolls stay eligible and separately identifiable under BOTH methods; other vehicle costs follow the method", () => {
+  const list = [exp(1, "2026-03-01", "supplies", 5000), exp(2, "2026-03-02", "vehicle_fuel", 4000, "fuel"), exp(3, "2026-03-03", "vehicle_fuel", 1500, "parking_tolls"), exp(4, "2026-03-04", "vehicle_fuel", 20000, "repairs")];
+  assert.deepEqual(V.taxExpenses(list, () => STD).map((e) => [e.id, e.amount_cents]), [[1, 5000], [3, 1500]], "standard mileage: parking and tolls counted in full; fuel and repairs are not");
+  assert.deepEqual(V.taxExpenses(list, () => act(null, false)).map((e) => e.id), [1, 3], "actual with no percentage: still parking and tolls only");
+  assert.deepEqual(V.taxExpenses(list, () => act(80, false)).map((e) => e.id), [1, 3], "actual with an unconfirmed percentage: still parking and tolls only");
+  assert.deepEqual(V.taxExpenses(list, () => act(80, true)).map((e) => [e.id, e.amount_cents]), [[1, 5000], [2, 3200], [3, 1500], [4, 16000]], "actual, confirmed 80%: the business-use share of fuel and repairs; parking and tolls in full (no allocation)");
+  assert.deepEqual(V.taxExpenses(list, () => act(0, true)).map((e) => e.id), [1, 3], "0% confirmed counts nothing else");
+  assert.equal(V.taxExpenses([exp(9, "2026-03-02", "vehicle_fuel", 999)], () => STD).length, 0, "a vehicle cost with no recorded kind is treated conservatively");
+  assert.deepEqual(V.taxExpenses(list, (y) => (y === 2026 ? act(50, true) : STD)).map((e) => e.amount_cents), [5000, 2000, 1500, 10000], "the rule is per tax year");
+  assert.equal(list[1].amount_cents, 4000, "the records themselves are never changed");
+  assert.equal(V.isParkingTolls(list[2]), true); assert.equal(V.isParkingTolls(list[1]), false);
+});
+
+test("business-use allocation: validated, rounded to whole cents, and must be confirmed before anything is counted", () => {
+  assert.equal(V.allocate(10001, 85), 8501); assert.equal(V.allocate(3333, 33.33), 1111); assert.equal(V.allocate(5, 50), 3); assert.equal(V.allocate(1000, 100), 1000); assert.equal(V.allocate(1000, 0), 0);
+  assert.equal(V.parseBusinessUse(""), null); assert.equal(V.parseBusinessUse("85"), 85); assert.equal(V.parseBusinessUse("12.5"), 12.5); assert.equal(V.parseBusinessUse("100"), 100);
+  for (const bad of ["101", "-5", "abc", "50%", "12.345", "1e2"]) assert.equal(V.parseBusinessUse(bad), "bad", bad);
+  assert.equal(V.allocationStatus(STD), "standard"); assert.equal(V.allocationStatus(act(null, true)), "needs_percent"); assert.equal(V.allocationStatus(act(70, false)), "needs_confirmation"); assert.equal(V.allocationStatus(act(70, true)), "applied");
+  const rows = [{ amount_cents: 10000, vehicle_category: "fuel" }, { amount_cents: 2000, vehicle_category: "parking_tolls" }];
+  const std = V.vehicleTaxSummary(rows, STD), ap = V.vehicleTaxSummary(rows, act(75, true)), un = V.vehicleTaxSummary(rows, act(75, false));
+  assert.deepEqual([std.actualSpendingCents, std.countedInTaxEstimatesCents, std.notCountedCents, std.parkingTollsCents, std.mileageApplies, std.warning], [12000, 2000, 10000, 2000, true, null]);
+  assert.deepEqual([ap.actualSpendingCents, ap.countedInTaxEstimatesCents, ap.notCountedCents, ap.mileageApplies], [12000, 9500, 2500, false], "actual spending is preserved; only the counted share changes");
+  assert.deepEqual([un.countedInTaxEstimatesCents, un.mileageApplies], [2000, false]); assert.match(un.warning, /not confirmed/); assert.match(V.vehicleTaxSummary(rows, act(null, false)).warning, /no business-use percentage/);
+  assert.match(ap.warning, /mileage deduction is not applied/i);
   assert.equal(V.isTaxMethod("actual"), true); assert.equal(V.isTaxMethod("both"), false);
 });
 
-const packetFor = (expenses, over = {}) => P.buildPacket({ year: 2026, income: [{ id: 1, occurred_on: "2026-03-10", source: "square", tax_form: "1099k", gross_cents: 100000, tip_cents: 0, fee_cents: 3000, visits: 1, imported: true, payer_id: null }],
-  expenses, trips: [], rules: R.emptyRules(2026), forms: [], payers: [], payments: [], inventory: Inv.inventoryReport([], [], "2026-01-01", "2026-12-31"), expiredLots: 0, lastImportRefunds: 0, ...over });
-test("year-end packet: vehicle spending is shown beside the figures, and counted only under actual expenses", () => {
-  const list = [exp(1, "2026-03-01", "supplies", 5000), exp(2, "2026-03-02", "vehicle_fuel", 4000)];
-  const std = packetFor(list), act = packetFor(list, { vehicleMethod: "actual" });
-  assert.equal(std.profit.expensesTotal, 5000); assert.equal(std.profit.estimatedProfit, 97000 - 5000);
-  assert.deepEqual(std.vehicle, { method: "standard_mileage", spendingCents: 4000, count: 1, countedCents: 0, notClaimedCents: 4000 });
-  assert.equal(act.profit.expensesTotal, 9000); assert.equal(act.vehicle.countedCents, 4000); assert.equal(act.vehicle.notClaimedCents, 0);
-  assert.equal(std.detail.expenses.length, 1, "the expense list handed to the preparer has no vehicle costs under the standard rate");
-  assert.ok(std.readiness.some((r) => /NOT counted/.test(r.text)) && act.readiness.some((r) => /do not also claim the mileage deduction/i.test(r.text)));
-  const only = packetFor([exp(2, "2026-03-02", "vehicle_fuel", 4000)]);
-  assert.equal(only.profit.estimatedProfit, null, "vehicle costs alone never make a period look like it has expenses entered");
-  // years with no vehicle costs are unchanged by the feature
+const packetFor = (expenses, over = {}, trips = []) => P.buildPacket({ year: 2026, income: [{ id: 1, occurred_on: "2026-03-10", source: "square", tax_form: "1099k", gross_cents: 100000, tip_cents: 0, fee_cents: 3000, visits: 1, imported: true, payer_id: null }],
+  expenses, trips, rules: { ...R.emptyRules(2026), mileage_rate_cents: 70, mileage_rate_confirmed: true }, forms: [], payers: [], payments: [], inventory: Inv.inventoryReport([], [], "2026-01-01", "2026-12-31"), expiredLots: 0, lastImportRefunds: 0, ...over });
+const trip = { id: 1, driven_on: "2026-03-01", miles_tenths: 1000, purpose: "supply_run", odometer_start: null, odometer_end: null };
+const vlist = [exp(1, "2026-03-01", "supplies", 5000), exp(2, "2026-03-02", "vehicle_fuel", 4000, "fuel"), exp(3, "2026-03-03", "vehicle_fuel", 1500, "parking_tolls")];
+test("year-end packet: parking and tolls counted and shown on their own line; other vehicle spending shown beside, not inside", () => {
+  const std = packetFor(vlist);
+  assert.equal(std.profit.expensesTotal, 6500); assert.equal(std.profit.estimatedProfit, 97000 - 6500);
+  assert.deepEqual(std.vehicle, { method: "standard_mileage", allocation: "standard", businessUsePercent: null, businessUseConfirmed: false, spendingCents: 5500, count: 2, parkingTollsCents: 1500, countedCents: 1500, notCountedCents: 4000 });
+  assert.deepEqual(std.expenses.byCategory.map((c) => [c.label, c.total]).sort(), [["Supplies", 5000], ["Vehicle: Parking and tolls", 1500]], "parking and tolls are their own line");
+  assert.deepEqual(std.detail.expenses.map((e) => [e.category, e.amount_cents]), [["Supplies", 5000], ["Vehicle: Parking and tolls", 1500]]);
+  assert.ok(std.readiness.some((r) => /parking and tolls\) is counted|4000|40\.00/.test(r.text)) || std.readiness.some((r) => /not, because the standard mileage rate/.test(r.text)));
+  assert.equal(packetFor([exp(3, "2026-03-03", "vehicle_fuel", 1500, "parking_tolls")]).profit.estimatedProfit, 97000 - 1500, "parking and tolls count as an expense entry");
   const plain = packetFor([exp(1, "2026-03-01", "supplies", 5000)]);
-  assert.deepEqual(plain.profit, packetFor([exp(1, "2026-03-01", "supplies", 5000)], { vehicleMethod: "actual" }).profit);
-  assert.equal(plain.vehicle.spendingCents, 0);
+  assert.deepEqual(plain.profit, packetFor([exp(1, "2026-03-01", "supplies", 5000)], { vehicleRule: act(80, true) }).profit, "years with no vehicle costs are unaffected");
+});
+
+test("actual expenses: the packet counts only the confirmed business-use share, keeps the spending record, and never presents the mileage deduction as applicable", () => {
+  const none = packetFor(vlist, { vehicleRule: act(null, false) }, [trip]), unconf = packetFor(vlist, { vehicleRule: act(80, false) }, [trip]), ok = packetFor(vlist, { vehicleRule: act(80, true) }, [trip]);
+  assert.equal(none.profit.expensesTotal, 6500, "no percentage: only parking and tolls on top of supplies"); assert.equal(unconf.profit.expensesTotal, 6500);
+  assert.equal(ok.profit.expensesTotal, 5000 + 3200 + 1500, "80% of fuel plus parking and tolls in full");
+  for (const p of [none, unconf, ok]) { assert.equal(p.vehicle.spendingCents, 5500, "the actual spending record is preserved in full"); assert.equal(p.vehicle.method, "actual"); }
+  assert.deepEqual([ok.vehicle.allocation, ok.vehicle.businessUsePercent, ok.vehicle.countedCents, ok.vehicle.notCountedCents], ["applied", 80, 4700, 800]);
+  assert.match(none.readiness.map((r) => r.text).join("|"), /no business-use percentage is entered/); assert.match(unconf.readiness.map((r) => r.text).join("|"), /not confirmed with your preparer/);
+  // mileage: records and the computed figure stay, but it is not presented as an applicable deduction
+  for (const p of [none, unconf, ok]) {
+    assert.equal(p.mileage.applies, false); assert.equal(p.mileage.deductionCents, null); assert.equal(p.mileage.referenceDeductionCents, 7000, "kept for reference only");
+    assert.equal(p.mileage.trips, 1); assert.equal(p.mileage.miles_tenths, 1000); assert.equal(p.mileage.centsPerMile, 70);
+    assert.match(p.readiness.map((r) => r.text).join("|"), /mileage deduction is NOT applied/i);
+    const summary = P.packetCsv(p, "summary"); assert.match(summary, /mileage_deduction_estimate_cents,\s*\n|mileage_deduction_estimate_cents,$/m); assert.match(summary, /mileage_deduction_applies,no/);
+    assert.match(P.packetCsv(p, "mileage_detail"), /2026-03-01/, "the underlying mileage records are still exported");
+  }
+  const std = packetFor(vlist, {}, [trip]);
+  assert.deepEqual([std.mileage.applies, std.mileage.deductionCents, std.mileage.referenceDeductionCents], [true, 7000, null], "standard mileage: the deduction estimate is exactly as before");
+  assert.match(P.packetCsv(std, "summary"), /mileage_deduction_estimate_cents,7000/); assert.match(P.packetCsv(std, "summary"), /mileage_deduction_applies,yes/);
 });
 
 test("the mileage tracker and its calculations are untouched by vehicle costs", () => {
@@ -157,12 +189,12 @@ test("estimated and planned maintenance never reach the ledger or any report", (
 
 // ---------- database safety ----------
 test("version 10 only adds new tables; money rows reuse expenses so receipts, backups and exports keep working", () => {
-  assert.ok(S.SCHEMA_VERSION >= 10);
+  assert.ok(S.SCHEMA_VERSION >= 11);
   const v10 = ["vehicles", "vehicle_expense_details", "vehicle_maintenance", "vehicle_tax_method"];
   for (const t of v10) { assert.ok(S.schemaStatements.some((s) => new RegExp(`^\\s*CREATE TABLE IF NOT EXISTS ${t} \\(`).test(s)), t); assert.ok(S.EXPORT_TABLES.includes(t), `${t} is exported and backed up`); }
   const alters = S.schemaStatements.filter((s) => /^\s*ALTER/i.test(s));
-  assert.equal(alters.filter((s) => /ALTER TABLE vehicle/i.test(s)).length, 0);
-  assert.equal(alters.filter((s) => !/ALTER TABLE (expenses DROP CONSTRAINT IF EXISTS expenses_category_check, ADD CONSTRAINT expenses_category_check|tax_year_rules ADD COLUMN)/.test(s)).length, 0, "the only ALTERs are the earlier tax-rule columns and the one category list from version 9; vehicles alter nothing");
+  assert.equal(alters.filter((s) => /ALTER TABLE vehicle/i.test(s)).length, 2, "the only vehicle ALTERs add the two business-use columns");
+  assert.equal(alters.filter((s) => !/ALTER TABLE (expenses DROP CONSTRAINT IF EXISTS expenses_category_check, ADD CONSTRAINT expenses_category_check|tax_year_rules ADD COLUMN|vehicle_tax_method ADD COLUMN IF NOT EXISTS business_use_(percent|confirmed))/.test(s)).length, 0, "the only ALTERs are the earlier tax-rule columns, the one category list from version 9 and the two business-use columns");
   const body = (t) => new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\(([\\s\\S]*?)\\n   \\)`).exec(S.schemaStatements.join("\n"))[1];
   assert.match(body("vehicle_expense_details"), /expense_id\s+bigint PRIMARY KEY REFERENCES expenses\(id\)/, "one detail row per expense: no second money record exists");
   assert.match(body("vehicle_maintenance"), /expense_id\s+bigint UNIQUE REFERENCES expenses\(id\)/, "a paid item points at its single expense");
@@ -200,5 +232,20 @@ test("vehicle pages are gated, mobile-friendly with the existing styles, and the
   const e = rd("src/app/expenses/page.tsx");
   assert.match(e, /category === VEHICLE_EXPENSE_CATEGORY\) return fail/); assert.match(e, /filter\(\(c\) => c\.id !== VEHICLE_EXPENSE_CATEGORY\)/);
   assert.match(rd("src/components/Nav.tsx"), /href: "\/vehicles"/);
-  assert.match(rd("src/app/page.tsx"), /taxExpenses\(exps/, "dashboard estimates use the tax view");
+  assert.match(rd("src/app/page.tsx"), /taxExpenses\(allExps/, "dashboard estimates use the tax view");
+});
+
+// ---------- chart of accounts: 6110 can never silently clash ----------
+test("the vehicle account never collides with an existing account: first free number, never skipped, nothing existing changed", () => {
+  const st = S.schemaStatements.find((x) => /INSERT INTO accounts/.test(x));
+  assert.match(st, /generate_series\(6110, 6899\)/); assert.match(st, /WHERE NOT EXISTS \(SELECT 1 FROM accounts WHERE number = n\)/);
+  assert.match(st, /ORDER BY \(n % 10 <> 0\), n LIMIT 1/, "tidy multiples of ten first");
+  assert.match(st, /NOT EXISTS \(SELECT 1 FROM accounts WHERE system_key = 'cat:vehicle_fuel'\)/, "never adds a second vehicle account");
+  assert.doesNotMatch(st, /number = 6110 OR|OR number = 6110/, "a custom 6110 no longer makes the statement do nothing");
+  assert.doesNotMatch(st, /ON CONFLICT|UPDATE|DELETE/, "no existing account is touched");
+  assert.match(st, /WHERE EXISTS \(SELECT 1 FROM accounts\)/, "a new chart is seeded by the app instead");
+  const L = require("../.testbuild/ledger.js");
+  const noVeh = A.DEFAULT_ACCOUNTS.filter((d) => d.key !== "cat:vehicle_fuel").map((d, i) => ({ id: i + 1, number: d.number, label: d.label, type: d.type, normal: d.normal, system_key: d.key, active: true }));
+  const missing = L.buildLedger({ accounts: noVeh, income: [], expenses: [exp(1, "2026-03-02", "vehicle_fuel", 4000, "fuel")], movements: [], items: [], payments: [], manual: [] });
+  assert.match(missing.problems.join(" "), /cat:vehicle_fuel/, "if the account were ever missing the ledger says so loudly instead of dropping the cost quietly");
 });
