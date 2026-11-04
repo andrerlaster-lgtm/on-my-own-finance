@@ -1,9 +1,9 @@
 /*
- * Database schema (version 8). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS, ADD COLUMN IF NOT EXISTS and
+ * Database schema (version 9). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS, ADD COLUMN IF NOT EXISTS and
  * ON CONFLICT only. Nothing here drops or rewrites data. Privacy rule: no column may hold a client or patient's name,
  * contact details, birth date or health information (tests/schema.test.cjs checks the column names).
  */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 export const schemaStatements: string[] = [
   `CREATE TABLE IF NOT EXISTS app_meta (
@@ -94,7 +94,7 @@ export const schemaStatements: string[] = [
      id              bigserial PRIMARY KEY,
      spent_on        date NOT NULL,
      amount_cents    bigint NOT NULL CHECK (amount_cents > 0 AND amount_cents <= 99999999999),
-     category        text NOT NULL CHECK (category IN ('supplies', 'insurance', 'licenses_fees', 'equipment', 'software', 'advertising', 'professional_services', 'phone_internet', 'training', 'other')),
+     category        text NOT NULL CHECK (category IN ('supplies', 'insurance', 'licenses_fees', 'equipment', 'software', 'advertising', 'professional_services', 'phone_internet', 'training', 'vehicle_fuel', 'other')),
      vendor          text CHECK (vendor IS NULL OR char_length(vendor) BETWEEN 1 AND 60),
      receipt_on_file boolean NOT NULL DEFAULT false,
      created_at      timestamptz NOT NULL DEFAULT now()
@@ -232,6 +232,12 @@ export const schemaStatements: string[] = [
      created_at timestamptz NOT NULL DEFAULT now(),
      expires_at timestamptz NOT NULL
    )`,
+  // ---- version 9: a "Vehicle and fuel (gas)" expense category. The ONE exception to "additive only": the expenses.category CHECK list must be widened,
+  // so it is replaced in a single atomic ALTER (no rows are read, changed or removed; every existing category stays allowed). The account is added only to a chart that already exists. ----
+  `ALTER TABLE expenses DROP CONSTRAINT IF EXISTS expenses_category_check, ADD CONSTRAINT expenses_category_check CHECK (category IN ('supplies', 'insurance', 'licenses_fees', 'equipment', 'software', 'advertising', 'professional_services', 'phone_internet', 'training', 'vehicle_fuel', 'other'))`,
+  `INSERT INTO accounts (number, label, type, normal, system_key)
+   SELECT 6110, 'Vehicle and fuel', 'operating_expense', 'debit', 'cat:vehicle_fuel'
+   WHERE EXISTS (SELECT 1 FROM accounts) AND NOT EXISTS (SELECT 1 FROM accounts WHERE system_key = 'cat:vehicle_fuel' OR number = 6110)`,
   `INSERT INTO app_meta (key, value) VALUES ('schema_version', '${SCHEMA_VERSION}')
    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now() WHERE app_meta.value::int < EXCLUDED.value::int`,
 ];

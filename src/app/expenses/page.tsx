@@ -94,6 +94,7 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
         <label htmlFor="a">Amount ($)</label><input id="a" name="amount" type="text" inputMode="decimal" placeholder="0.00" required />
         <label htmlFor="c">Category</label>
         <select id="c" name="category" defaultValue="supplies">{CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}</select>
+        <p className="muted">Gas: pick &ldquo;Vehicle and fuel (gas)&rdquo;. If your preparer uses the standard mileage rate, don&rsquo;t also deduct gas; the mileage rate already covers it.</p>
         <label htmlFor="v">Vendor (business name only, optional)</label><input id="v" name="vendor" type="text" maxLength={60} />
         <label className="check"><input type="checkbox" name="receipt_on_file" /> I kept the paper or digital receipt</label>
         <label>Receipt photo</label><ReceiptPicker />

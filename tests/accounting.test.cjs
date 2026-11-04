@@ -21,7 +21,7 @@ test("default chart: conventional numbering, one account per number, every syste
   const keys = A.DEFAULT_ACCOUNTS.map((d) => d.key).filter(Boolean);
   assert.equal(new Set(keys).size, keys.length);
   for (const k of ["cash_bank", "square_balance", "inventory", "owner_contributions", "owner_draws", "service_revenue", "supplies_consumed", "processing_fees", "tips", "inventory_adjust", "opening_equity"]) assert.ok(keys.includes(k), k);
-  for (const c of ["supplies", "insurance", "licenses_fees", "equipment", "software", "advertising", "professional_services", "phone_internet", "training", "other"]) assert.ok(keys.includes(`cat:${c}`), c);
+  for (const c of ["supplies", "insurance", "licenses_fees", "equipment", "software", "advertising", "professional_services", "phone_internet", "training", "vehicle_fuel", "other"]) assert.ok(keys.includes(`cat:${c}`), c);
   for (const t of ["asset", "liability", "equity", "revenue", "cost_of_services", "operating_expense", "other"]) assert.ok(A.DEFAULT_ACCOUNTS.some((d) => d.type === t), t);
 });
 
