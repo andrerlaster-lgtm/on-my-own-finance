@@ -1,12 +1,12 @@
 # On My Own Finance — notes for AI helpers
 
-Private business-finance app for a Texas sole-proprietor mobile blood-draw business. One user (the owner).
+Private business-finance app for a Texas sole-proprietor mobile blood-draw business. Two approved users: administrator (GitHub) and business owner (Google); roles `admin` and `business_owner` (src/lib/access.ts). Security/permission pages use `requireAdmin()`.
 
 - Work on a branch, open a PR, one PR per phase. Do not merge, deploy, change env vars/keys, or touch the production database without the owner's approval. Deploys happen by merging to `main` (Vercel).
 - **No patient or client data, ever.** No names, contact details, birth dates or health info in the schema, imports, logs or exports. Aggregate visit counts and non-identifying transaction info only. Do not import patient fields from Square.
 - Keep revenue, processing fees, expenses and profit separate. Until expenses exist, never label revenue minus fees as profit ("Net after processing fees, before expenses").
 - 1099-K (processor) and 1099-NEC (payer) totals are tracked separately. Tax rules are per year, start empty, and need "confirmed with preparer". Nothing here is tax advice.
-- Every page, server action and API route must call `requireOwner()` / `ownerOrNull()` (tests enforce it).
+- Every page, server action and API route must call `requireOwner()` / `requireAdmin()` / `ownerOrNull()` (tests enforce it).
 - No secrets in the repo. Keep dependencies minimal and exact-pinned.
 - Check: `npm run typecheck && npm test && npm run build`.
 
