@@ -1,0 +1,45 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "rootDir": "src/lib",
+    "outDir": ".testbuild"
+  },
+  "include": [
+    "src/lib/csv.ts",
+    "src/lib/schema.ts",
+    "src/lib/taxRules.ts",
+    "src/lib/money.ts",
+    "src/lib/dates.ts",
+    "src/lib/income.ts",
+    "src/lib/inventory.ts",
+    "src/lib/squareFormat.ts",
+    "src/lib/squareImport.ts",
+    "src/lib/expenses.ts",
+    "src/lib/mileage.ts",
+    "src/lib/receipts.ts",
+    "src/lib/lots.ts",
+    "src/lib/taxforms.ts",
+    "src/lib/packet.ts",
+    "src/lib/backupFormat.ts",
+    "src/lib/csp.ts",
+    "src/lib/env.ts",
+    "src/lib/access.ts",
+    "src/lib/activity.ts",
+    "src/lib/paging.ts",
+    "src/lib/accounts.ts",
+    "src/lib/ledger.ts",
+    "src/lib/statements.ts",
+    "src/lib/reports.ts",
+    "src/lib/journalForms.ts",
+    "src/lib/xlsx.ts",
+    "src/lib/pdfdoc.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

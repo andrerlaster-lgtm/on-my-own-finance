@@ -1,0 +1,13 @@
+node_modules/
+.next/
+.testbuild/
+out/
+*.tsbuildinfo
+.env*
+!.env.example
+.vercel
+.DS_Store
+# exports and backups contain financial records: never commit them
+*.export.json
+*.export.csv
+backups/
