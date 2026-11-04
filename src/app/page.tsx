@@ -70,7 +70,7 @@ export default async function Home() {
         <div className="card">
           <h2>Today&rsquo;s appointments <span className="muted">{dayLabel(today)} · {openOnly(todaysAppts).length}</span></h2>
           {openOnly(todaysAppts).length === 0 ? <p className="muted">None today. <Link href="/secretary/new">Add an appointment</Link></p>
-            : <ul className="entries">{openOnly(todaysAppts).map((a) => <AppointmentRow key={a.id} a={a} serviceLabel={apptServices.find((s) => s.code === a.service_code)?.label ?? a.service_code} />)}</ul>}
+            : <ul className="entries">{openOnly(todaysAppts).map((a) => <AppointmentRow key={a.id} a={a} day={today} serviceLabel={apptServices.find((s) => s.code === a.service_code)?.label ?? a.service_code} />)}</ul>}
           <p className="muted"><Link href="/secretary">Open the Secretary calendar</Link></p>
         </div>
       )}

@@ -517,9 +517,13 @@ export async function listServices(): Promise<Service[]> {
   return rows.map((r) => ({ code: r.code as string, label: r.label as string, default_minutes: Number(r.default_minutes), active: r.active === true || r.active === "t" || r.active === "true" }));
 }
 
-/** Appointments that START in [fromMs, toMs) (a Chicago day or week), earliest first. Canceled ones are included; callers decide whether to show them. */
+/**
+ * Appointments that occupy any part of [fromMs, toMs) (a Chicago day or week), earliest first, each returned once. One that starts before the window and
+ * runs into it (across midnight) is included. Appointments last at most 12 hours (a table CHECK), which lets the start-time index narrow the search.
+ * Canceled ones are included; callers decide whether to show them.
+ */
 export async function listAppointments(fromMs: number, toMsExclusive: number): Promise<Appointment[]> {
-  const rows = await sql().query(`SELECT ${APPT_COLS} FROM appointments WHERE starts_at >= $1::timestamptz AND starts_at < $2::timestamptz ORDER BY starts_at, id`, [iso(fromMs), iso(toMsExclusive)]);
+  const rows = await sql().query(`SELECT ${APPT_COLS} FROM appointments WHERE starts_at >= $1::timestamptz - interval '12 hours' AND starts_at < $2::timestamptz AND ends_at > $1::timestamptz ORDER BY starts_at, id`, [iso(fromMs), iso(toMsExclusive)]);
   return (rows as Record<string, unknown>[]).map(apptFrom);
 }
 

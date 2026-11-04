@@ -36,9 +36,9 @@ export default async function SecretaryDay({ searchParams }: { searchParams: Pro
       <div className="card">
         <h2>{dayLabel(date)}{date === today ? " (today)" : ""} <span className="muted">{open.length} appointment{open.length === 1 ? "" : "s"}</span></h2>
         {hours !== 24 && <p className="muted">Clocks change on this day, so it is {hours} hours long.</p>}
-        {open.length === 0 ? <p className="muted">Nothing scheduled. <Link href={`/secretary/new?date=${date}`}>Add an appointment</Link></p> : <ul className="entries">{open.map((a) => <AppointmentRow key={a.id} a={a} serviceLabel={label(a.service_code)} />)}</ul>}
+        {open.length === 0 ? <p className="muted">Nothing scheduled. <Link href={`/secretary/new?date=${date}`}>Add an appointment</Link></p> : <ul className="entries">{open.map((a) => <AppointmentRow key={a.id} a={a} serviceLabel={label(a.service_code)} day={date} />)}</ul>}
       </div>
-      {canceled.length > 0 && <div className="card"><h2>Canceled <span className="muted">{canceled.length}</span></h2><ul className="entries">{canceled.map((a) => <AppointmentRow key={a.id} a={a} serviceLabel={label(a.service_code)} />)}</ul></div>}
+      {canceled.length > 0 && <div className="card"><h2>Canceled <span className="muted">{canceled.length}</span></h2><ul className="entries">{canceled.map((a) => <AppointmentRow key={a.id} a={a} serviceLabel={label(a.service_code)} day={date} />)}</ul></div>}
     </main>
   );
 }

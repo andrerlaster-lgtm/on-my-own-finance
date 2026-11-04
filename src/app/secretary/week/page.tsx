@@ -33,7 +33,7 @@ export default async function SecretaryWeek({ searchParams }: { searchParams: Pr
         {days.map((d) => { const items = byDay.get(d) ?? []; return (
           <div className="card" key={d}>
             <h2><Link href={`/secretary?date=${d}`}>{dayLabel(d)}</Link>{d === today ? " (today)" : ""}</h2>
-            {items.length === 0 ? <p className="muted">Free</p> : <ul className="entries">{items.map((a) => <AppointmentRow key={a.id} a={a} serviceLabel={label(a.service_code)} compact />)}</ul>}
+            {items.length === 0 ? <p className="muted">Free</p> : <ul className="entries">{items.map((a) => <AppointmentRow key={a.id} a={a} serviceLabel={label(a.service_code)} compact day={d} />)}</ul>}
           </div>); })}
       </div>
     </main>

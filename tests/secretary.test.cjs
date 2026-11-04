@@ -162,3 +162,59 @@ test("database writes are guarded: no double booking race, no stale status overw
   assert.doesNotMatch(sec, /DELETE FROM appointments/, "appointments are canceled, never deleted");
   assert.match(sec, /findConflicts\(await overlapping/);
 });
+
+// ---------- appointments that cross midnight ----------
+test("an appointment that crosses midnight is shown on every Chicago day it occupies, once per day, as one appointment", () => {
+  const late = { id: 7, status: "scheduled", starts_at: at("2026-11-03", "23:30"), ends_at: at("2026-11-03", "23:30") + 60 * 60000 }; // 11:30 PM to 12:30 AM
+  assert.deepEqual(X.occupiedDates(late), ["2026-11-03", "2026-11-04"]);
+  assert.equal(X.occursOn(late, "2026-11-03"), true); assert.equal(X.occursOn(late, "2026-11-04"), true);
+  assert.equal(X.occursOn(late, "2026-11-02"), false); assert.equal(X.occursOn(late, "2026-11-05"), false);
+  assert.deepEqual(X.continuation(late, "2026-11-03"), { fromPrev: false, toNext: true }); assert.deepEqual(X.continuation(late, "2026-11-04"), { fromPrev: true, toNext: false });
+  // the week groups it under both days, and it is the same appointment (same id), never a copy
+  const other = { id: 8, status: "scheduled", starts_at: at("2026-11-04", "09:00"), ends_at: at("2026-11-04", "09:30") };
+  const g = X.groupByDate([other, late]);
+  assert.deepEqual([...g.keys()], ["2026-11-03", "2026-11-04"]);
+  assert.deepEqual(g.get("2026-11-03").map((a) => a.id), [7]); assert.deepEqual(g.get("2026-11-04").map((a) => a.id), [7, 8], "listed first on the second day because it started earlier");
+  assert.equal(new Set([...g.values()].flat().map((a) => a.id)).size, 2, "two appointments in total, however many days they span");
+  assert.equal(g.get("2026-11-03")[0], g.get("2026-11-04")[0], "the very same record");
+  assert.equal(X.spanLabel(late), "Tue Nov 3, 11:30 PM to Wed Nov 4, 12:30 AM CST");
+  assert.equal(X.spanLabel(other), X.rangeLabel(other), "a same-day appointment is labelled as before");
+});
+
+test("midnight edges: ending exactly at midnight stays on one day; starting exactly at midnight is not on the day before", () => {
+  const endsAtMidnight = { starts_at: at("2026-11-03", "23:00"), ends_at: at("2026-11-04", "00:00") };
+  assert.deepEqual(X.occupiedDates(endsAtMidnight), ["2026-11-03"]); assert.equal(X.occursOn(endsAtMidnight, "2026-11-04"), false);
+  const startsAtMidnight = { starts_at: at("2026-11-04", "00:00"), ends_at: at("2026-11-04", "01:00") };
+  assert.deepEqual(X.occupiedDates(startsAtMidnight), ["2026-11-04"]); assert.equal(X.occursOn(startsAtMidnight, "2026-11-03"), false);
+  assert.deepEqual(X.continuation(startsAtMidnight, "2026-11-04"), { fromPrev: false, toNext: false });
+  const longest = { starts_at: at("2026-11-03", "20:00"), ends_at: at("2026-11-03", "20:00") + 12 * 3600000 }; // the 12-hour maximum
+  assert.deepEqual(X.occupiedDates(longest), ["2026-11-03", "2026-11-04"]);
+});
+
+test("crossing midnight on a daylight-saving day uses real elapsed time and Chicago days", () => {
+  const fall = { starts_at: at("2026-10-31", "23:30"), ends_at: at("2026-10-31", "23:30") + 120 * 60000 }; // lands on Nov 1, 12:30 AM CDT
+  assert.deepEqual(X.occupiedDates(fall), ["2026-10-31", "2026-11-01"]); assert.equal(X.spanLabel(fall), "Sat Oct 31, 11:30 PM to Sun Nov 1, 1:30 AM CDT");
+  const into = { starts_at: at("2026-11-01", "00:30"), ends_at: at("2026-11-01", "00:30") + 8 * 3600000 }; // 8 real hours across the repeated hour: the wall clock advances 7 hours
+  assert.equal(X.toLocal(into.ends_at).time, "07:30"); assert.equal(X.toLocal(into.ends_at).zone, "CST");
+  const spring = { starts_at: at("2027-03-13", "23:00"), ends_at: at("2027-03-13", "23:00") + 180 * 60000 }; // Mar 13 11 PM + 3 real hours = Mar 14 3:00 AM CDT (2 to 3 AM does not exist)
+  assert.equal(X.toLocal(spring.ends_at).time, "03:00"); assert.deepEqual(X.occupiedDates(spring), ["2027-03-13", "2027-03-14"]);
+  assert.equal(X.occursOn(spring, "2027-03-14"), true);
+});
+
+test("overlap protection still covers the part of a midnight-crossing appointment that falls on the next day", () => {
+  const late = { id: 7, status: "scheduled", starts_at: at("2026-11-03", "23:30"), ends_at: at("2026-11-04", "00:30") };
+  assert.deepEqual(X.findConflicts([late], { starts_at: at("2026-11-04", "00:15"), ends_at: at("2026-11-04", "00:45"), status: "scheduled" }).map((a) => a.id), [7]);
+  assert.deepEqual(X.findConflicts([late], { starts_at: at("2026-11-04", "00:30"), ends_at: at("2026-11-04", "01:00"), status: "scheduled" }), [], "back to back is still fine");
+  assert.match(X.conflictText([late]), /#7 on Tue Nov 3, 11:30 PM to 12:30 AM CST/);
+});
+
+test("the calendar queries return appointments that overlap the window, so both days and the whole week see them; privacy and accounting isolation are unchanged", () => {
+  const db = rd("src/lib/db.ts"), fn = db.slice(db.indexOf("export async function listAppointments"), db.indexOf("export async function getAppointment"));
+  assert.match(fn, /starts_at >= \$1::timestamptz - interval '12 hours' AND starts_at < \$2::timestamptz AND ends_at > \$1::timestamptz/, "overlap with the window, not just the start time");
+  assert.match(S.schemaStatements.find((s) => /CREATE TABLE IF NOT EXISTS appointments/.test(s)), /extract\(epoch FROM \(ends_at - starts_at\)\) <= 43200/, "the 12-hour cap the index narrowing relies on");
+  for (const f of ["src/app/secretary/page.tsx", "src/app/secretary/week/page.tsx", "src/app/page.tsx"]) assert.match(rd(f), /<AppointmentRow[^>]*day=\{/, `${f} marks continuing appointments`);
+  assert.match(rd("src/app/secretary/week/page.tsx"), /groupByDate\(openOnly\(list\)\)/);
+  const row = rd("src/components/AppointmentRow.tsx"); assert.match(row, /continues past midnight/); assert.match(row, /continues from the day before/);
+  assert.doesNotMatch(row + rd("src/lib/schedule.ts").replace(/\/\*[\s\S]*?\*\//g, ""), /income|expense|inventory|revenue|cents|patient|phone|address/i);
+  assert.doesNotMatch(fn, /income|expenses|inventory_|journal_|accounts/);
+});

@@ -180,9 +180,34 @@ export function parseCancelReason(raw: string | undefined): CancelReason | null 
 }
 
 /* ---------------- grouping for the calendar ---------------- */
-export function groupByDate<T extends Pick<Appointment, "starts_at">>(list: readonly T[]): Map<string, T[]> {
+/** Every Chicago calendar day an appointment occupies, in order. One that ends exactly at midnight does not occupy the next day. */
+export function occupiedDates(a: Pick<Appointment, "starts_at" | "ends_at">): string[] {
+  const out: string[] = [];
+  const last = dateOf(a.ends_at - 1);
+  for (let d = dateOf(a.starts_at); d <= last && out.length < 3; d = addDays(d, 1)) out.push(d);
+  return out;
+}
+/** Does the appointment occupy any of this Chicago day? */
+export function occursOn(a: Pick<Appointment, "starts_at" | "ends_at">, date: string): boolean {
+  const b = dayBounds(date);
+  return a.starts_at < b.to && a.ends_at > b.from;
+}
+/** For one day's row: does it carry on from the day before, and/or into the next day? */
+export function continuation(a: Pick<Appointment, "starts_at" | "ends_at">, date: string): { fromPrev: boolean; toNext: boolean } {
+  const b = dayBounds(date);
+  return { fromPrev: a.starts_at < b.from, toNext: a.ends_at > b.to };
+}
+/** Date-and-time label for an appointment that crosses midnight: "Tue Nov 3, 11:30 PM to Wed Nov 4, 12:30 AM CST". */
+export function spanLabel(a: Pick<Appointment, "starts_at" | "ends_at">): string {
+  const s = toLocal(a.starts_at), e = toLocal(a.ends_at);
+  if (s.date === e.date) return rangeLabel(a);
+  return `${dayLabel(s.date)}, ${clock(s.time)} to ${dayLabel(e.date)}, ${clock(e.time)} ${e.zone}${s.zone !== e.zone ? ` (starts ${s.zone})` : ""}`;
+}
+
+/** Appointments grouped by Chicago day. One that crosses midnight is listed under each day it occupies (still one appointment, one id). */
+export function groupByDate<T extends Pick<Appointment, "starts_at" | "ends_at">>(list: readonly T[]): Map<string, T[]> {
   const m = new Map<string, T[]>();
-  for (const a of [...list].sort((x, y) => x.starts_at - y.starts_at)) { const d = dateOf(a.starts_at); m.set(d, [...(m.get(d) ?? []), a]); }
+  for (const a of [...list].sort((x, y) => x.starts_at - y.starts_at)) for (const d of occupiedDates(a)) m.set(d, [...(m.get(d) ?? []), a]);
   return m;
 }
 /** Open appointments (not canceled) first count for "today" summaries. */
