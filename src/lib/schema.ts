@@ -1,9 +1,9 @@
 /*
- * Database schema (version 8). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS, ADD COLUMN IF NOT EXISTS and
+ * Database schema (version 9). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS, ADD COLUMN IF NOT EXISTS and
  * ON CONFLICT only. Nothing here drops or rewrites data. Privacy rule: no column may hold a client or patient's name,
  * contact details, birth date or health information (tests/schema.test.cjs checks the column names).
  */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 export const schemaStatements: string[] = [
   `CREATE TABLE IF NOT EXISTS app_meta (
@@ -232,13 +232,50 @@ export const schemaStatements: string[] = [
      created_at timestamptz NOT NULL DEFAULT now(),
      expires_at timestamptz NOT NULL
    )`,
+  // ---- version 9: Secretary (appointments). Only NEW tables; nothing existing is touched and no money or inventory column exists here.
+  // PRIVACY: no name, phone, address, birth date, medical or free-text column, by design: only fixed choices, numbers and times. Times are real instants (timestamptz),
+  // shown in America/Chicago. The exclusion constraint makes a double booking impossible at the database level (canceled appointments do not block).
+  // For the future booking website: `source` + `external_ref` give an idempotency key (the same booking can never be created twice), and appointment_services is the list of services it can offer. ----
+  `CREATE TABLE IF NOT EXISTS appointment_services (
+     code            text PRIMARY KEY CHECK (code ~ '^[a-z][a-z0-9_]{1,29}$'),
+     label           text NOT NULL CHECK (char_length(label) BETWEEN 1 AND 40),
+     default_minutes integer NOT NULL DEFAULT 30 CHECK (default_minutes BETWEEN 5 AND 720),
+     sort_order      integer NOT NULL DEFAULT 100,
+     active          boolean NOT NULL DEFAULT true,
+     created_at      timestamptz NOT NULL DEFAULT now()
+   )`,
+  `INSERT INTO appointment_services (code, label, default_minutes, sort_order) VALUES
+     ('blood_draw', 'Blood draw', 30, 10), ('specimen_collection', 'Specimen collection', 30, 20), ('specimen_delivery', 'Specimen pickup or delivery', 30, 30),
+     ('consultation', 'Consultation', 30, 40), ('other_service', 'Other service', 30, 90)
+   ON CONFLICT (code) DO NOTHING`,
+  `CREATE TABLE IF NOT EXISTS appointments (
+     id            bigserial PRIMARY KEY,
+     type          text NOT NULL CHECK (type IN ('office', 'mobile')),
+     status        text NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'confirmed', 'completed', 'canceled')),
+     service_code  text NOT NULL REFERENCES appointment_services(code),
+     starts_at     timestamptz NOT NULL,
+     ends_at       timestamptz NOT NULL,
+     time_zone     text NOT NULL DEFAULT 'America/Chicago' CHECK (time_zone = 'America/Chicago'),
+     cancel_reason text CHECK (cancel_reason IS NULL OR cancel_reason IN ('requested', 'no_show', 'rescheduled', 'unavailable', 'other')),
+     canceled_at   timestamptz,
+     source        text NOT NULL DEFAULT 'internal' CHECK (source IN ('internal', 'website')),
+     external_ref  text CHECK (external_ref IS NULL OR external_ref ~ '^[A-Za-z0-9_-]{1,64}$'),
+     created_at    timestamptz NOT NULL DEFAULT now(),
+     updated_at    timestamptz NOT NULL DEFAULT now(),
+     CHECK (ends_at > starts_at AND extract(epoch FROM (ends_at - starts_at)) <= 43200),
+     CHECK ((status = 'canceled') = (canceled_at IS NOT NULL)),
+     CHECK (cancel_reason IS NULL OR status = 'canceled'),
+     EXCLUDE USING gist (tstzrange(starts_at, ends_at) WITH &&) WHERE (status <> 'canceled')
+   )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS appointments_external_ref_idx ON appointments (source, external_ref) WHERE external_ref IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS appointments_starts_idx ON appointments (starts_at)`,
   `INSERT INTO app_meta (key, value) VALUES ('schema_version', '${SCHEMA_VERSION}')
    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now() WHERE app_meta.value::int < EXCLUDED.value::int`,
 ];
 
 /** Tables included in the full export, in order. */
-export const EXPORT_TABLES = ["app_meta", "tax_year_rules", "audit_log", "import_batches", "income_entries", "inventory_items", "inventory_movements", "expenses", "expense_receipts", "mileage_trips", "inventory_lot_uses", "inventory_settings", "payers", "income_entry_payers", "form_1099_entries", "tax_payments", "tax_snapshots", "accounts", "expense_category_accounts", "expense_accounts", "income_accounts", "inventory_item_accounts", "journal_entries", "journal_lines"] as const;
+export const EXPORT_TABLES = ["app_meta", "tax_year_rules", "audit_log", "import_batches", "income_entries", "inventory_items", "inventory_movements", "expenses", "expense_receipts", "mileage_trips", "appointment_services", "appointments", "inventory_lot_uses", "inventory_settings", "payers", "income_entry_payers", "form_1099_entries", "tax_payments", "tax_snapshots", "accounts", "expense_category_accounts", "expense_accounts", "income_accounts", "inventory_item_accounts", "journal_entries", "journal_lines"] as const;
 export type ExportTable = (typeof EXPORT_TABLES)[number];
 
 /** Column each exported table is sorted by (every other table has an id column). */
-export const EXPORT_ORDER: Record<string, string> = { app_meta: "key", tax_year_rules: "tax_year", inventory_settings: "item_id", income_entry_payers: "income_id", expense_category_accounts: "category" };
+export const EXPORT_ORDER: Record<string, string> = { app_meta: "key", tax_year_rules: "tax_year", inventory_settings: "item_id", income_entry_payers: "income_id", expense_category_accounts: "category", appointment_services: "code" };

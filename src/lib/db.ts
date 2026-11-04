@@ -10,6 +10,8 @@ import type { ItemInput, Movement, MovementInput } from "./inventory";
 import { replay, checkAdd, type Stock } from "./inventory";
 import { checkLotConsistency, expiryAlerts, inventoryReport, lotBalances, suggestAllocation, validateAllocation, type LotUse } from "./lots";
 import type { PacketInput } from "./packet";
+import type { Appointment, AppointmentInput, Service, Status, CancelReason } from "./schedule";
+import { conflictText, findConflicts } from "./schedule";
 
 /** Neon over HTTP: one statement per query, no connection to keep open. Only used after requireOwner(). */
 export const databaseConfigured = (): boolean => Boolean(process.env.DATABASE_URL);
@@ -499,4 +501,80 @@ export async function listActivity(beforeId: number | null, limit = 100): Promis
     SELECT id, to_char(at AT TIME ZONE 'America/Chicago', 'YYYY-MM-DD HH24:MI') AS at, action, detail
     FROM audit_log WHERE (${beforeId}::bigint IS NULL OR id < ${beforeId}::bigint) ORDER BY id DESC LIMIT ${limit}`;
   return rows.map((r) => ({ id: Number(r.id), at: r.at as string, action: r.action as string, detail: r.detail }));
+}
+
+// ---- Secretary: appointments (schema version 9). No money, inventory or personal details are touched or stored here. ----
+const toMs = (v: unknown): number => Number(v);
+const apptFrom = (r: Record<string, unknown>): Appointment => ({
+  id: Number(r.id), type: r.type as Appointment["type"], status: r.status as Status, service_code: r.service_code as string,
+  starts_at: toMs(r.starts_ms), ends_at: toMs(r.ends_ms), cancel_reason: (r.cancel_reason as CancelReason | null) ?? null, source: r.source as string, external_ref: (r.external_ref as string | null) ?? null,
+});
+const APPT_COLS = `id, type, status, service_code, (extract(epoch from starts_at) * 1000)::bigint AS starts_ms, (extract(epoch from ends_at) * 1000)::bigint AS ends_ms, cancel_reason, source, external_ref`;
+const iso = (ms: number) => new Date(ms).toISOString();
+
+export async function listServices(): Promise<Service[]> {
+  const rows = await sql()`SELECT code, label, default_minutes, active FROM appointment_services ORDER BY sort_order, label`;
+  return rows.map((r) => ({ code: r.code as string, label: r.label as string, default_minutes: Number(r.default_minutes), active: r.active === true || r.active === "t" || r.active === "true" }));
+}
+
+/**
+ * Appointments that occupy any part of [fromMs, toMs) (a Chicago day or week), earliest first, each returned once. One that starts before the window and
+ * runs into it (across midnight) is included. Appointments last at most 12 hours (a table CHECK), which lets the start-time index narrow the search.
+ * Canceled ones are included; callers decide whether to show them.
+ */
+export async function listAppointments(fromMs: number, toMsExclusive: number): Promise<Appointment[]> {
+  const rows = await sql().query(`SELECT ${APPT_COLS} FROM appointments WHERE starts_at >= $1::timestamptz - interval '12 hours' AND starts_at < $2::timestamptz AND ends_at > $1::timestamptz ORDER BY starts_at, id`, [iso(fromMs), iso(toMsExclusive)]);
+  return (rows as Record<string, unknown>[]).map(apptFrom);
+}
+
+export async function getAppointment(id: number): Promise<Appointment | null> {
+  const rows = await sql().query(`SELECT ${APPT_COLS} FROM appointments WHERE id = $1::bigint`, [id]);
+  return rows[0] ? apptFrom(rows[0] as Record<string, unknown>) : null;
+}
+
+/** Open (not canceled) appointments that overlap a time span. */
+async function overlapping(fromMs: number, toMsExclusive: number): Promise<Appointment[]> {
+  const rows = await sql().query(`SELECT ${APPT_COLS} FROM appointments WHERE status <> 'canceled' AND tstzrange(starts_at, ends_at) && tstzrange($1::timestamptz, $2::timestamptz)`, [iso(fromMs), iso(toMsExclusive)]);
+  return (rows as Record<string, unknown>[]).map(apptFrom);
+}
+const isOverlapError = (e: unknown) => /exclusion constraint|23P01/.test(`${(e as { code?: string })?.code ?? ""} ${(e as Error)?.message ?? ""}`);
+const RACE = "Another appointment was just booked for that time. Pick a different time.";
+
+export type SaveResult = { ok: true; id: number } | { ok: false; error: string };
+
+/** Adds an appointment unless it overlaps an open one. The check is repeated by the database itself, so two people saving at once cannot double book. */
+export async function addAppointment(v: AppointmentInput): Promise<SaveResult> {
+  const clash = findConflicts(await overlapping(v.starts_at, v.ends_at), { starts_at: v.starts_at, ends_at: v.ends_at, status: "scheduled" });
+  if (clash.length) return { ok: false, error: conflictText(clash) };
+  try {
+    const rows = await sql().query(`INSERT INTO appointments (type, service_code, starts_at, ends_at) VALUES ($1, $2, $3::timestamptz, $4::timestamptz) RETURNING id`, [v.type, v.service_code, iso(v.starts_at), iso(v.ends_at)]);
+    const id = Number((rows as { id: string }[])[0].id);
+    await audit("add_appointment", { id, type: v.type, service: v.service_code });
+    return { ok: true, id };
+  } catch (e) { if (isOverlapError(e)) return { ok: false, error: RACE }; throw e; }
+}
+
+/** Changes the time, length, type or service of an OPEN appointment. */
+export async function updateAppointment(id: number, v: AppointmentInput): Promise<SaveResult> {
+  const clash = findConflicts(await overlapping(v.starts_at, v.ends_at), { id, starts_at: v.starts_at, ends_at: v.ends_at, status: "scheduled" });
+  if (clash.length) return { ok: false, error: conflictText(clash) };
+  try {
+    const rows = await sql().query(`UPDATE appointments SET type = $2, service_code = $3, starts_at = $4::timestamptz, ends_at = $5::timestamptz, updated_at = now()
+                                    WHERE id = $1::bigint AND status IN ('scheduled', 'confirmed') RETURNING id`, [id, v.type, v.service_code, iso(v.starts_at), iso(v.ends_at)]);
+    if (!rows.length) return { ok: false, error: "That appointment can no longer be edited (it is completed, canceled or gone)." };
+    await audit("update_appointment", { id, type: v.type, service: v.service_code });
+    return { ok: true, id };
+  } catch (e) { if (isOverlapError(e)) return { ok: false, error: RACE }; throw e; }
+}
+
+/** Moves an appointment to a new status. `from` must still be its current status, so a stale page cannot overwrite a newer change. Reinstating a canceled one re-checks for overlaps. */
+export async function setAppointmentStatus(id: number, from: Status, to: Status, reason: CancelReason | null): Promise<SaveResult> {
+  try {
+    const rows = await sql().query(
+      `UPDATE appointments SET status = $3, canceled_at = CASE WHEN $3 = 'canceled' THEN now() ELSE NULL END, cancel_reason = CASE WHEN $3 = 'canceled' THEN $4 ELSE NULL END, updated_at = now()
+       WHERE id = $1::bigint AND status = $2 RETURNING id`, [id, from, to, to === "canceled" ? reason ?? "other" : null]);
+    if (!rows.length) return { ok: false, error: "That appointment changed while you were looking at it. Open it again." };
+    await audit("set_appointment_status", { id, status: to });
+    return { ok: true, id };
+  } catch (e) { if (isOverlapError(e)) return { ok: false, error: "That time is now taken by another appointment, so this one cannot be reinstated." }; throw e; }
 }

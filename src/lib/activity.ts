@@ -11,9 +11,10 @@ const LABELS: Record<string, string> = {
   set_expiry_warning: "Changed an expiry warning", add_expense: "Added an expense", delete_expense: "Deleted an expense", add_receipt: "Added a receipt photo", delete_receipt: "Removed a receipt photo",
   add_trip: "Added a mileage trip", delete_trip: "Deleted a mileage trip", add_payer: "Added a payer", add_1099_form: "Entered a 1099 form amount", delete_1099_form: "Deleted a 1099 form amount",
   add_tax_payment: "Recorded a tax payment", delete_tax_payment: "Deleted a tax payment", bulk_set_tax_form: "Set the tax form on Square entries", save_tax_snapshot: "Saved a tax snapshot",
+  add_appointment: "Added an appointment", update_appointment: "Changed an appointment", set_appointment_status: "Changed an appointment's status",
   signin_allowed: "Signed in", signin_refused: "Sign-in refused",
 };
-const SHOW = ["id", "item_id", "batch", "year", "tax_year", "kind", "category", "form", "rows", "added", "duplicates", "skipped", "quantity", "lots", "table", "occurred_on", "source", "days", "level", "visits"];
+const SHOW = ["id", "item_id", "batch", "year", "tax_year", "kind", "category", "form", "rows", "added", "duplicates", "skipped", "quantity", "lots", "status", "type", "service", "table", "occurred_on", "source", "days", "level", "visits"];
 const MONEY = ["amount_cents"];
 
 export function describeActivity(action: string, detail: unknown): { label: string; facts: string } {

@@ -14,7 +14,7 @@ export const APP_NAME = "on-my-own-finance";
 /** Parents before children, so foreign keys hold while restoring. Every exported table must be listed (a test checks). */
 export const RESTORE_ORDER = [
   "app_meta", "tax_year_rules", "audit_log", "import_batches", "payers", "income_entries", "income_entry_payers", "expenses", "expense_receipts",
-  "mileage_trips", "inventory_items", "inventory_movements", "inventory_lot_uses", "inventory_settings", "form_1099_entries", "tax_payments", "tax_snapshots",
+  "mileage_trips", "appointment_services", "appointments", "inventory_items", "inventory_movements", "inventory_lot_uses", "inventory_settings", "form_1099_entries", "tax_payments", "tax_snapshots",
   "accounts", "expense_category_accounts", "expense_accounts", "income_accounts", "inventory_item_accounts", "journal_entries", "journal_lines",
 ] as const;
 

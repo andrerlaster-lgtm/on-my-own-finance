@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireOwner } from "@/lib/auth";
-import { databaseConfigured, databaseReady, schemaVersion, runSetup, listIncomeAll, lastImportRefunds, listItems, listExpensesAll, listTripsAll, getRules, listMovements, listLotUses, warnDaysByItem, listPayments, purgePendingTrips } from "@/lib/db";
+import { databaseConfigured, databaseReady, schemaVersion, runSetup, listIncomeAll, lastImportRefunds, listItems, listExpensesAll, listTripsAll, getRules, listMovements, listLotUses, warnDaysByItem, listPayments, purgePendingTrips, listAppointments, listServices } from "@/lib/db";
 import { setAside } from "@/lib/taxforms";
 import { expiryAlerts, type LotUse } from "@/lib/lots";
 import type { Movement } from "@/lib/inventory";
@@ -11,6 +11,8 @@ import { isLowStock } from "@/lib/inventory";
 import { formatCents } from "@/lib/money";
 import { periodRanges, todayInChicago } from "@/lib/dates";
 import { SCHEMA_VERSION } from "@/lib/schema";
+import { dayBounds, openOnly, dayLabel } from "@/lib/schedule";
+import { AppointmentRow } from "@/components/AppointmentRow";
 import { envProblems } from "@/lib/env";
 import { revalidatePath } from "next/cache";
 import { SubmitButton } from "@/components/SubmitButton";
@@ -53,6 +55,9 @@ export default async function Home() {
   const expiring = v >= 4 ? expiryAlerts(allItems, movements as Movement[], lotUses as LotUse[], warn as Map<number, number>, today) : [];
   const rates: Record<number, RateInfo> = {};
   years.forEach((y, i) => { const r = rateRules[i]; if (r) rates[y] = { centsPerMile: r.mileage_rate_cents, confirmed: r.mileage_rate_confirmed, h2CentsPerMile: r.mileage_rate_h2_cents, h2Confirmed: r.mileage_rate_h2_confirmed }; });
+  // Today's appointments (Secretary). A failure here must never hide the money dashboard.
+  const dayB = dayBounds(today);
+  const [todaysAppts, apptServices] = ready && v >= 9 ? await Promise.all([listAppointments(dayB.from, dayB.to), listServices()]).catch(() => [null, null] as const) : [null, null] as const;
   const cols = [["This week", periods.week], ["This month", periods.month], ["This year", periods.year]] as const;
   return (
     <main>
@@ -61,6 +66,14 @@ export default async function Home() {
       {(() => { const p = envProblems(process.env, process.env.NODE_ENV === "production"); return p.length > 0 ? <div className="card err"><b>Server settings need attention</b><ul className="plain">{p.map((x) => <li key={x}>{x}</li>)}</ul></div> : null; })()}
       <div className="note">Profit figures are estimates only. Tax numbers, tip treatment and sales-tax status are for your tax preparer to confirm.</div>
       {ready && (version ?? 0) >= SCHEMA_VERSION && <p className="status"><span className="dot" aria-hidden="true" />Database ready (version {version})</p>}
+      {todaysAppts && apptServices && (
+        <div className="card">
+          <h2>Today&rsquo;s appointments <span className="muted">{dayLabel(today)} · {openOnly(todaysAppts).length}</span></h2>
+          {openOnly(todaysAppts).length === 0 ? <p className="muted">None today. <Link href="/secretary/new">Add an appointment</Link></p>
+            : <ul className="entries">{openOnly(todaysAppts).map((a) => <AppointmentRow key={a.id} a={a} day={today} serviceLabel={apptServices.find((s) => s.code === a.service_code)?.label ?? a.service_code} />)}</ul>}
+          <p className="muted"><Link href="/secretary">Open the Secretary calendar</Link></p>
+        </div>
+      )}
       {dash && (
         <div className="quick" aria-label="Add something">
           <Link href="/income"><b>Add income</b><span>Money in, tips, visits</span></Link>
