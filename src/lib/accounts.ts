@@ -50,6 +50,7 @@ export const DEFAULT_ACCOUNTS: DefaultAccount[] = [
   { number: 6080, label: "Training and education", type: "operating_expense", normal: "debit", key: "cat:training" },
   { number: 6090, label: "Office and general supplies", type: "operating_expense", normal: "debit", key: "cat:supplies" },
   { number: 6100, label: "Payment processing fees", type: "operating_expense", normal: "debit", key: "processing_fees" },
+  { number: 6110, label: "Vehicle expenses", type: "operating_expense", normal: "debit", key: "cat:vehicle_fuel" },
   { number: 6900, label: "Other operating expenses", type: "operating_expense", normal: "debit", key: "cat:other" },
   { number: 7010, label: "Tips received (treatment to confirm with preparer)", type: "other", normal: "credit", key: "tips" },
   { number: 7020, label: "Interest and other income", type: "other", normal: "credit", key: null },

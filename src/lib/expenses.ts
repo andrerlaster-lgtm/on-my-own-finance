@@ -16,12 +16,13 @@ export const CATEGORIES = [
   { id: "professional_services", label: "Professional services" },
   { id: "phone_internet", label: "Phone and internet" },
   { id: "training", label: "Training and education" },
+  { id: "vehicle_fuel", label: "Vehicle expenses" },
   { id: "other", label: "Other" },
 ] as const;
 export type Category = (typeof CATEGORIES)[number]["id"];
 export const CATEGORY_LABELS: Record<string, string> = Object.fromEntries(CATEGORIES.map((c) => [c.id, c.label]));
 
-export interface Expense { id: number; spent_on: string; amount_cents: number; category: Category; vendor: string | null; receipt_on_file: boolean; photos: number }
+export interface Expense { id: number; spent_on: string; amount_cents: number; category: Category; vendor: string | null; receipt_on_file: boolean; photos: number; /** Only set for vehicle costs (from the Vehicles detail row): fuel, parking_tolls, ... */ vehicle_category?: string | null }
 export interface ExpenseInput { spent_on: string; amount_cents: number; category: Category; vendor: string | null; receipt_on_file: boolean }
 
 /** A business name: letters, digits, spaces and . , & ' - # / only; no long digit runs (card numbers) and no @. */

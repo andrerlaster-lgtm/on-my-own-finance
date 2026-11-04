@@ -11,9 +11,11 @@ const LABELS: Record<string, string> = {
   set_expiry_warning: "Changed an expiry warning", add_expense: "Added an expense", delete_expense: "Deleted an expense", add_receipt: "Added a receipt photo", delete_receipt: "Removed a receipt photo",
   add_trip: "Added a mileage trip", delete_trip: "Deleted a mileage trip", add_payer: "Added a payer", add_1099_form: "Entered a 1099 form amount", delete_1099_form: "Deleted a 1099 form amount",
   add_tax_payment: "Recorded a tax payment", delete_tax_payment: "Deleted a tax payment", bulk_set_tax_form: "Set the tax form on Square entries", save_tax_snapshot: "Saved a tax snapshot",
+  add_vehicle: "Added a vehicle", set_vehicle_active: "Changed a vehicle's active status", add_vehicle_expense: "Added a vehicle expense", add_maintenance_plan: "Planned upcoming maintenance",
+  complete_service: "Recorded a completed service", delete_maintenance: "Deleted a maintenance entry", set_vehicle_method: "Set how vehicle costs are treated for taxes",
   signin_allowed: "Signed in", signin_refused: "Sign-in refused",
 };
-const SHOW = ["id", "item_id", "batch", "year", "tax_year", "kind", "category", "form", "rows", "added", "duplicates", "skipped", "quantity", "lots", "table", "occurred_on", "source", "days", "level", "visits"];
+const SHOW = ["id", "item_id", "batch", "year", "tax_year", "kind", "category", "form", "rows", "added", "duplicates", "skipped", "quantity", "lots", "vehicle_id", "table", "occurred_on", "source", "days", "level", "visits"];
 const MONEY = ["amount_cents"];
 
 export function describeActivity(action: string, detail: unknown): { label: string; facts: string } {

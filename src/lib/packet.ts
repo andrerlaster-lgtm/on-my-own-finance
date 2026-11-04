@@ -1,5 +1,6 @@
 import { toCsv } from "./csv";
 import { CATEGORY_LABELS, estimateProfit, summarizeExpenses, type Expense } from "./expenses";
+import { STANDARD_RULE, VEHICLE_CATEGORY_LABELS, allocationStatus, isVehicleCost, taxExpenses, vehicleTaxSummary, type AllocationStatus, type TaxMethod, type VehicleTaxRule } from "./vehicles";
 import { SOURCE_LABELS, TAX_FORMS, summarize, type IncomeEntry } from "./income";
 import { mileageSummary, PURPOSE_LABELS, type Trip } from "./mileage";
 import { needsConfirmation, type TaxYearRules } from "./taxRules";
@@ -13,6 +14,8 @@ import type { Report } from "./lots";
 export interface PacketInput {
   year: number; income: IncomeEntry[]; expenses: Expense[]; trips: Trip[]; rules: TaxYearRules; forms: FormEntry[]; payers: Payer[]; payments: Payment[];
   inventory: Report; expiredLots: number; lastImportRefunds: number;
+  /** How the year's vehicle costs are treated in these estimates. Default: standard mileage. Expenses may carry vehicle_category (parking_tolls, fuel, ...). */
+  vehicleRule?: VehicleTaxRule;
 }
 export interface Group { key: string; label: string; count: number; revenue: number; tips: number; receipts: number; fees: number; visits: number }
 export interface Readiness { level: "attention" | "note"; text: string }
@@ -20,8 +23,10 @@ export interface Packet {
   year: number;
   receipts: { total: Group; bySource: Group[]; byForm: Group[]; byPayer: Group[] };
   expenses: { total: number; count: number; byCategory: { key: string; label: string; total: number; count: number; withReceipt: number; without: number }[] };
-  mileage: { miles_tenths: number; trips: number; centsPerMile: number | null; confirmed: boolean; centsPerMileH2?: number | null; confirmedH2?: boolean; deductionCents: number | null };
+  mileage: { miles_tenths: number; trips: number; centsPerMile: number | null; confirmed: boolean; centsPerMileH2?: number | null; confirmedH2?: boolean; /** null when the year uses actual expenses (the mileage deduction is then not applied) */ deductionCents: number | null; /** false under actual expenses */ applies: boolean; /** the computed figure, for reference only, when it does not apply */ referenceDeductionCents: number | null };
   inventory: { beginValue: number; purchasesValue: number; usedValue: number; writeOffValue: number; adjustmentsNet: number; endValue: number; problems: string[] };
+  /** Actual vehicle spending is shown beside, not inside, the expense figures unless the year uses actual expenses. */
+  vehicle: { method: TaxMethod; allocation: AllocationStatus; businessUsePercent: number | null; businessUseConfirmed: boolean; spendingCents: number; count: number; parkingTollsCents: number; countedCents: number; notCountedCents: number };
   profit: { netAfterFees: number; expensesTotal: number; expenseCount: number; estimatedProfit: number | null };
   forms: { rows: ReconRow[]; unformed: Unformed[]; thresholdK: ReturnType<typeof thresholdProgress> & { receipts: number }; thresholdNec: ReturnType<typeof thresholdProgress> & { receipts: number } };
   setAside: SetAside;
@@ -59,9 +64,17 @@ function groupBy(entries: readonly IncomeEntry[], keyOf: (e: IncomeEntry) => [st
   return [...m.values()].sort((a, b) => b.receipts - a.receipts || a.label.localeCompare(b.label));
 }
 
+/** Vehicle costs get their own lines (parking and tolls separate from the rest) so they stay identifiable in the packet. */
+const catKey = (e: Expense) => (isVehicleCost(e) ? `vehicle:${e.vehicle_category ?? "other"}` : e.category);
+const catLabel = (e: Expense) => (isVehicleCost(e) ? `Vehicle: ${VEHICLE_CATEGORY_LABELS[e.vehicle_category ?? ""] ?? "Vehicle expenses"}` : CATEGORY_LABELS[e.category] ?? e.category);
+
 export function buildPacket(i: PacketInput): Packet {
   const y = `${i.year}-`, range = { from: `${i.year}-01-01`, to: `${i.year}-12-31` };
-  const income = i.income.filter((e) => e.occurred_on.startsWith(y)), expenses = i.expenses.filter((e) => e.spent_on.startsWith(y));
+  const rule = i.vehicleRule ?? STANDARD_RULE, method: TaxMethod = rule.method;
+  const income = i.income.filter((e) => e.occurred_on.startsWith(y)), yearExpenses = i.expenses.filter((e) => e.spent_on.startsWith(y));
+  const vehicleRows = yearExpenses.filter(isVehicleCost), vehicleCount = vehicleRows.length;
+  const vsum = vehicleTaxSummary(vehicleRows, rule), vehicleSpend = vsum.actualSpendingCents;
+  const expenses = taxExpenses(yearExpenses, () => rule); // parking/tolls always; other vehicle costs only as the confirmed business-use share under actual expenses
   const trips = i.trips.filter((t) => t.driven_on.startsWith(y)), payments = i.payments.filter((p) => p.tax_year === i.year);
   const payerLabel = (id: number | null) => (id === null ? "No payer chosen" : i.payers.find((p) => p.id === id)?.label ?? `Payer ${id}`);
   const formLabel = (id: string) => TAX_FORMS.find((t) => t.id === id)?.label.split(" (")[0] ?? id;
@@ -75,13 +88,13 @@ export function buildPacket(i: PacketInput): Packet {
   const ex = summarizeExpenses(expenses, range);
   const catMap = new Map<string, { key: string; label: string; total: number; count: number; withReceipt: number; without: number }>();
   for (const e of expenses) {
-    const c = catMap.get(e.category) ?? { key: e.category, label: CATEGORY_LABELS[e.category] ?? e.category, total: 0, count: 0, withReceipt: 0, without: 0 };
-    c.total += e.amount_cents; c.count++; (e.receipt_on_file || e.photos > 0 ? c.withReceipt++ : c.without++); catMap.set(e.category, c);
+    const key = catKey(e), c = catMap.get(key) ?? { key, label: catLabel(e), total: 0, count: 0, withReceipt: 0, without: 0 };
+    c.total += e.amount_cents; c.count++; (e.receipt_on_file || e.photos > 0 ? c.withReceipt++ : c.without++); catMap.set(key, c);
   }
 
   const rate = { centsPerMile: i.rules.mileage_rate_cents, confirmed: i.rules.mileage_rate_confirmed, h2CentsPerMile: i.rules.mileage_rate_h2_cents, h2Confirmed: i.rules.mileage_rate_h2_confirmed };
   const mi = mileageSummary(trips, range, { [i.year]: rate });
-  const mileage = { miles_tenths: mi.miles_tenths, trips: mi.trips, centsPerMile: rate.centsPerMile, confirmed: rate.confirmed, centsPerMileH2: rate.h2CentsPerMile, confirmedH2: rate.h2Confirmed, deductionCents: rate.centsPerMile === null ? null : mi.deductionCents };
+  const mileage = { miles_tenths: mi.miles_tenths, trips: mi.trips, centsPerMile: rate.centsPerMile, confirmed: rate.confirmed, centsPerMileH2: rate.h2CentsPerMile, confirmedH2: rate.h2Confirmed, deductionCents: rate.centsPerMile === null || method === "actual" ? null : mi.deductionCents, applies: method !== "actual", referenceDeductionCents: method === "actual" && rate.centsPerMile !== null ? mi.deductionCents : null };
 
   const t = i.inventory.totals;
   const inventory = { beginValue: t.beginValue, purchasesValue: t.purchaseValue + t.openingValue, usedValue: t.useValue, writeOffValue: t.writeOffValue, adjustmentsNet: t.adjUpValue - t.adjDownValue, endValue: t.endValue, problems: i.inventory.problems };
@@ -118,16 +131,19 @@ export function buildPacket(i: PacketInput): Packet {
   if (income.length === 0) note("No income is recorded for this year.");
   if (ex.count === 0) note("No expenses are entered, so profit is not estimated.");
   if (aside.status === "ok" && aside.remainingCents !== null && aside.remainingCents > 0) note("Set aside so far is less than the estimate; compare with the payments made.");
+  if (method === "actual") attn(vsum.allocation === "applied" ? `Actual expenses are used for ${i.year}: ${rule.businessUsePercent}% business use is applied to fuel, service, repairs, tires and insurance (parking and tolls in full). The mileage deduction is NOT applied; the mileage records below are for reference only. Your preparer decides what is deductible.` : `Actual expenses are selected for ${i.year}, but ${vsum.allocation === "needs_percent" ? "no business-use percentage is entered" : "the business-use percentage is not confirmed with your preparer"}, so fuel, service, repairs, tires and insurance are not counted yet (parking and tolls are). The mileage deduction is NOT applied.`);
+  else if (vehicleCount > 0 && vsum.notCountedCents > 0) note(`Actual vehicle spending of ${(vehicleSpend / 100).toFixed(2)} is in the books. ${(vsum.countedInTaxEstimatesCents / 100).toFixed(2)} of it (parking and tolls) is counted in these figures; the other ${(vsum.notCountedCents / 100).toFixed(2)} is not, because the standard mileage rate is used. Your preparer decides.`);
   note("How tips, expired write-offs and year-end inventory are treated is for your tax preparer.");
 
   return {
     year: i.year, receipts: { total, bySource, byForm, byPayer },
+    vehicle: { method, allocation: allocationStatus(rule), businessUsePercent: rule.businessUsePercent, businessUseConfirmed: rule.businessUseConfirmed, spendingCents: vehicleSpend, count: vehicleCount, parkingTollsCents: vsum.parkingTollsCents, countedCents: vsum.countedInTaxEstimatesCents, notCountedCents: vsum.notCountedCents },
     expenses: { total: ex.total, count: ex.count, byCategory: [...catMap.values()].sort((a, b) => b.total - a.total) },
     mileage, inventory, profit, forms, setAside: aside, payments,
     rules: { ...i.rules, pending }, readiness, caveats: CAVEATS,
     detail: {
       income: [...income].sort((a, b) => a.occurred_on.localeCompare(b.occurred_on)).map((e) => ({ date: e.occurred_on, source: SOURCE_LABELS[e.source] ?? e.source, tax_form: formLabel(e.tax_form), payer: e.payer_id === null ? "" : payerLabel(e.payer_id), revenue_cents: e.gross_cents, tips_cents: e.tip_cents, fee_cents: e.fee_cents, visits: e.visits })),
-      expenses: [...expenses].sort((a, b) => a.spent_on.localeCompare(b.spent_on)).map((e) => ({ date: e.spent_on, category: CATEGORY_LABELS[e.category] ?? e.category, vendor: e.vendor ?? "", amount_cents: e.amount_cents, receipt_kept: e.receipt_on_file ? "yes" : "no", photos: e.photos })),
+      expenses: [...expenses].sort((a, b) => a.spent_on.localeCompare(b.spent_on)).map((e) => ({ date: e.spent_on, category: catLabel(e), vendor: e.vendor ?? "", amount_cents: e.amount_cents, receipt_kept: e.receipt_on_file ? "yes" : "no", photos: e.photos })),
       trips: [...trips].sort((a, b) => a.driven_on.localeCompare(b.driven_on)).map((t2) => ({ date: t2.driven_on, purpose: PURPOSE_LABELS[t2.purpose] ?? t2.purpose, miles: (t2.miles_tenths / 10).toFixed(1), odometer_start: t2.odometer_start === null ? "" : String(t2.odometer_start), odometer_end: t2.odometer_end === null ? "" : String(t2.odometer_end) })),
     },
   };
@@ -142,8 +158,9 @@ export function packetCsv(p: Packet, section: PacketSection): string {
       const r: [string, Cell][] = [
         ["tax_year", p.year], ["revenue_cents (excludes tips and refunds)", p.receipts.total.revenue], ["tips_cents", p.receipts.total.tips], ["total_receipts_cents", p.receipts.total.receipts],
         ["processing_fees_cents", p.receipts.total.fees], ["net_after_processing_fees_cents", p.profit.netAfterFees], ["expenses_cents", p.profit.expensesTotal],
+        ["vehicle_method", p.vehicle?.method === "actual" ? "actual expenses" : "standard mileage"], ["vehicle_business_use_percent", p.vehicle?.businessUsePercent ?? null], ["vehicle_business_use_confirmed", p.vehicle?.businessUseConfirmed ? "yes" : "no"], ["actual_vehicle_spending_cents (in the books)", p.vehicle?.spendingCents ?? 0], ["vehicle_parking_tolls_cents", p.vehicle?.parkingTollsCents ?? 0], ["vehicle_spending_counted_in_expenses_cents", p.vehicle?.countedCents ?? 0],
         ["estimated_profit_cents (before taxes and mileage deduction)", p.profit.estimatedProfit], ["miles", (p.mileage.miles_tenths / 10).toFixed(1)], ["mileage_rate_cents_per_mile", p.mileage.centsPerMile],
-        ["mileage_rate_confirmed", p.mileage.confirmed ? "yes" : "no"], ["mileage_rate_from_july_1_cents_per_mile", p.mileage.centsPerMileH2 ?? null], ["mileage_rate_from_july_1_confirmed", p.mileage.confirmedH2 ? "yes" : "no"], ["mileage_deduction_estimate_cents", p.mileage.deductionCents],
+        ["mileage_rate_confirmed", p.mileage.confirmed ? "yes" : "no"], ["mileage_rate_from_july_1_cents_per_mile", p.mileage.centsPerMileH2 ?? null], ["mileage_rate_from_july_1_confirmed", p.mileage.confirmedH2 ? "yes" : "no"], ["mileage_deduction_estimate_cents", p.mileage.deductionCents], ["mileage_deduction_applies", p.mileage.applies === false ? "no (actual expenses selected; records kept for reference)" : "yes"],
         ["inventory_value_start_cents", p.inventory.beginValue], ["inventory_purchases_cents", p.inventory.purchasesValue], ["inventory_used_cents", p.inventory.usedValue],
         ["inventory_expired_writeoffs_cents", p.inventory.writeOffValue], ["inventory_value_end_cents", p.inventory.endValue],
         ["set_aside_percent", p.rules.set_aside_percent], ["set_aside_confirmed", p.rules.set_aside_confirmed ? "yes" : "no"], ["set_aside_estimate_cents", p.setAside.amountCents],

@@ -10,6 +10,8 @@ import type { ItemInput, Movement, MovementInput } from "./inventory";
 import { replay, checkAdd, type Stock } from "./inventory";
 import { checkLotConsistency, expiryAlerts, inventoryReport, lotBalances, suggestAllocation, validateAllocation, type LotUse } from "./lots";
 import type { PacketInput } from "./packet";
+import type { PlannedItem, ServiceInput, SpendRow, TaxMethod, VehicleExpenseInput, VehicleTaxRule } from "./vehicles";
+import { isTaxMethod, STANDARD_RULE, VEHICLE_EXPENSE_CATEGORY } from "./vehicles";
 
 /** Neon over HTTP: one statement per query, no connection to keep open. Only used after requireOwner(). */
 export const databaseConfigured = (): boolean => Boolean(process.env.DATABASE_URL);
@@ -315,10 +317,166 @@ export async function addExpense(v: ExpenseInput, photo?: Uint8Array): Promise<n
 
 /** Deletes the expense and its photos together, in one statement. */
 export async function deleteExpense(id: number): Promise<boolean> {
-  const rows = await sql()`WITH p AS (DELETE FROM expense_receipts WHERE expense_id = ${id}) DELETE FROM expenses WHERE id = ${id} RETURNING id, amount_cents, category`;
+  // Vehicle detail rows and maintenance links (version 10 tables) are removed or unlinked in the same statement when they exist. Only the expense is deleted from the books.
+  const hasVehicles = ((await schemaVersion()) ?? 0) >= 10;
+  const rows = hasVehicles
+    ? await sql()`WITH p AS (DELETE FROM expense_receipts WHERE expense_id = ${id}),
+                       d AS (DELETE FROM vehicle_expense_details WHERE expense_id = ${id}),
+                       m AS (UPDATE vehicle_maintenance SET expense_id = NULL WHERE expense_id = ${id})
+                  DELETE FROM expenses WHERE id = ${id} RETURNING id, amount_cents, category`
+    : await sql()`WITH p AS (DELETE FROM expense_receipts WHERE expense_id = ${id}) DELETE FROM expenses WHERE id = ${id} RETURNING id, amount_cents, category`;
   if (rows.length) await audit("delete_expense", { id, category: rows[0].category, amount_cents: Number(rows[0].amount_cents) });
   return rows.length > 0;
 }
+
+// ---- Vehicles (schema version 10) ----
+const truthy = (v: unknown) => v === true || v === "t" || v === "true";
+export interface Vehicle { id: number; label: string; active: boolean }
+export interface VehicleExpense { id: number; spent_on: string; amount_cents: number; vendor: string | null; receipt_on_file: boolean; vehicle_id: number; vehicle_category: string; odometer: number | null; photos: number }
+export interface MaintenanceRow extends PlannedItem { status: "planned" | "done"; done_on: string | null; odometer_at: number | null; expense_id: number | null; paid_cents: number | null }
+
+export async function listVehicles(): Promise<Vehicle[]> {
+  const rows = await sql()`SELECT id, label, active FROM vehicles ORDER BY active DESC, label, id`;
+  return rows.map((r) => ({ id: Number(r.id), label: r.label as string, active: truthy(r.active) }));
+}
+export async function addVehicle(label: string): Promise<number> {
+  const id = Number((await sql()`INSERT INTO vehicles (label) VALUES (${label}) RETURNING id`)[0].id);
+  await audit("add_vehicle", { id });
+  return id;
+}
+export async function setVehicleActive(id: number, active: boolean): Promise<void> {
+  await sql()`UPDATE vehicles SET active = ${active} WHERE id = ${id}`;
+  await audit("set_vehicle_active", { id });
+}
+
+export async function listVehicleExpenses(from: string, to: string, limit = 500): Promise<VehicleExpense[]> {
+  const rows = await sql()`
+    SELECT e.id, to_char(e.spent_on, 'YYYY-MM-DD') AS spent_on, e.amount_cents, e.vendor, e.receipt_on_file, d.vehicle_id, d.vehicle_category, d.odometer,
+           (SELECT count(*) FROM expense_receipts r WHERE r.expense_id = e.id) AS photos
+    FROM expenses e JOIN vehicle_expense_details d ON d.expense_id = e.id
+    WHERE e.spent_on BETWEEN ${from}::date AND ${to}::date ORDER BY e.spent_on DESC, e.id DESC LIMIT ${limit}`;
+  return rows.map((r) => ({ id: Number(r.id), spent_on: r.spent_on as string, amount_cents: Number(r.amount_cents), vendor: (r.vendor as string | null) ?? null, receipt_on_file: truthy(r.receipt_on_file),
+    vehicle_id: Number(r.vehicle_id), vehicle_category: r.vehicle_category as string, odometer: r.odometer === null ? null : Number(r.odometer), photos: Number(r.photos) }));
+}
+export const toSpendRow = (e: VehicleExpense): SpendRow => ({ spent_on: e.spent_on, amount_cents: e.amount_cents, vehicle_id: e.vehicle_id, vehicle_category: e.vehicle_category });
+
+/** The expense, its vehicle detail and (if given) its first photo in ONE statement: it can never exist half-saved, and it is one expense row, so it posts once. */
+export async function addVehicleExpense(v: VehicleExpenseInput, photo?: Uint8Array): Promise<number> {
+  const r = await sql().query(
+    `WITH e AS (INSERT INTO expenses (spent_on, amount_cents, category, vendor, receipt_on_file)
+                SELECT $1::date, $2::bigint, '${VEHICLE_EXPENSE_CATEGORY}', $3, $4 WHERE EXISTS (SELECT 1 FROM vehicles WHERE id = $5::bigint) RETURNING id),
+          d AS (INSERT INTO vehicle_expense_details (expense_id, vehicle_id, vehicle_category, odometer) SELECT e.id, $5::bigint, $6, $7::int FROM e RETURNING expense_id),
+          p AS (INSERT INTO expense_receipts (expense_id, bytes_len, data) SELECT e.id, $8::int, decode($9::text, 'base64') FROM e WHERE $9::text IS NOT NULL RETURNING id)
+     SELECT (SELECT id FROM e) AS id`,
+    [v.expense.spent_on, v.expense.amount_cents, v.expense.vendor, v.expense.receipt_on_file, v.vehicle_id, v.vehicle_category, v.odometer, photo ? photo.length : null, photo ? Buffer.from(photo).toString("base64") : null]);
+  const id = (r as { id: string | null }[])[0]?.id;
+  if (id === null || id === undefined) throw new Error("Vehicle not found.");
+  await audit("add_vehicle_expense", { id: Number(id), vehicle_id: v.vehicle_id, category: v.vehicle_category, amount_cents: v.expense.amount_cents });
+  if (photo) await audit("add_receipt", { expense_id: Number(id), bytes: photo.length });
+  return Number(id);
+}
+
+export async function listMaintenance(): Promise<MaintenanceRow[]> {
+  const rows = await sql()`
+    SELECT m.id, m.vehicle_id, m.status, m.title, to_char(m.due_on, 'YYYY-MM-DD') AS due_on, m.due_odometer, m.estimated_cost_cents,
+           to_char(m.done_on, 'YYYY-MM-DD') AS done_on, m.odometer_at, m.expense_id, e.amount_cents AS paid_cents
+    FROM vehicle_maintenance m LEFT JOIN expenses e ON e.id = m.expense_id
+    ORDER BY (m.status = 'planned') DESC, m.due_on NULLS LAST, m.done_on DESC NULLS LAST, m.id DESC`;
+  const n = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+  return rows.map((r) => ({ id: Number(r.id), vehicle_id: Number(r.vehicle_id), status: r.status as "planned" | "done", title: r.title as string, due_on: (r.due_on as string | null) ?? null,
+    due_odometer: n(r.due_odometer), estimated_cost_cents: n(r.estimated_cost_cents), done_on: (r.done_on as string | null) ?? null, odometer_at: n(r.odometer_at), expense_id: n(r.expense_id), paid_cents: n(r.paid_cents) }));
+}
+
+/** The highest odometer reading on record for each vehicle (from its expenses and its service log). */
+export async function latestOdometers(): Promise<Map<number, number>> {
+  const rows = await sql()`
+    SELECT vehicle_id, max(o) AS odo FROM (
+      SELECT vehicle_id, odometer AS o FROM vehicle_expense_details WHERE odometer IS NOT NULL
+      UNION ALL SELECT vehicle_id, odometer_at AS o FROM vehicle_maintenance WHERE odometer_at IS NOT NULL
+    ) x GROUP BY vehicle_id`;
+  return new Map(rows.map((r) => [Number(r.vehicle_id), Number(r.odo)]));
+}
+
+export async function addPlannedMaintenance(v: { vehicle_id: number; title: string; due_on: string | null; due_odometer: number | null; estimated_cost_cents: number | null }): Promise<number> {
+  const rows = await sql()`INSERT INTO vehicle_maintenance (vehicle_id, status, title, due_on, due_odometer, estimated_cost_cents)
+    SELECT ${v.vehicle_id}::bigint, 'planned', ${v.title}, ${v.due_on}::date, ${v.due_odometer}::int, ${v.estimated_cost_cents}::bigint WHERE EXISTS (SELECT 1 FROM vehicles WHERE id = ${v.vehicle_id}::bigint) RETURNING id`;
+  if (!rows.length) throw new Error("Vehicle not found.");
+  await audit("add_maintenance_plan", { id: Number(rows[0].id), vehicle_id: v.vehicle_id });
+  return Number(rows[0].id);
+}
+
+/**
+ * Records a completed service, in ONE statement. With a cost it also creates the paid expense (and its vehicle detail and photo), so the money is posted once.
+ * With maintenance_id it completes that upcoming item (guarded by status = 'planned', so a double tap cannot create a second expense).
+ * The item's estimated cost is never copied anywhere: only the amount actually paid becomes an expense.
+ */
+export async function saveService(s: ServiceInput, photo?: Uint8Array): Promise<{ maintenanceId: number; expenseId: number | null }> {
+  const c = s.cost;
+  const photoParams = [photo ? photo.length : null, photo ? Buffer.from(photo).toString("base64") : null];
+  const expenseCte = (from: string) => `e AS (INSERT INTO expenses (spent_on, amount_cents, category, vendor, receipt_on_file)
+                SELECT $1::date, $2::bigint, '${VEHICLE_EXPENSE_CATEGORY}', $3, $4 FROM ${from} WHERE $2::bigint IS NOT NULL RETURNING id)`;
+  const receiptCte = `p AS (INSERT INTO expense_receipts (expense_id, bytes_len, data) SELECT e.id, $8::int, decode($9::text, 'base64') FROM e WHERE $9::text IS NOT NULL RETURNING id)`;
+  const common = [s.done_on, c ? c.amount_cents : null, c ? c.vendor : null, c ? c.receipt_on_file : false];
+  let rows: { mid: string | null; eid: string | null }[];
+  if (s.maintenance_id !== null) {
+    rows = (await sql().query(
+      `WITH m0 AS (SELECT id, vehicle_id FROM vehicle_maintenance WHERE id = $5::bigint AND status = 'planned'),
+            ${expenseCte("m0")},
+            d AS (INSERT INTO vehicle_expense_details (expense_id, vehicle_id, vehicle_category, odometer) SELECT e.id, m0.vehicle_id, $6, $7::int FROM e, m0 RETURNING expense_id),
+            ${receiptCte},
+            u AS (UPDATE vehicle_maintenance SET status = 'done', done_on = $1::date, odometer_at = $7::int, expense_id = (SELECT id FROM e) WHERE id IN (SELECT id FROM m0) RETURNING id)
+       SELECT (SELECT id FROM u) AS mid, (SELECT id FROM e) AS eid`,
+      [...common, s.maintenance_id, c ? c.vehicle_category : null, s.odometer, ...photoParams])) as { mid: string | null; eid: string | null }[];
+  } else {
+    rows = (await sql().query(
+      `WITH v AS (SELECT id FROM vehicles WHERE id = $5::bigint),
+            ${expenseCte("v")},
+            d AS (INSERT INTO vehicle_expense_details (expense_id, vehicle_id, vehicle_category, odometer) SELECT e.id, $5::bigint, $6, $7::int FROM e RETURNING expense_id),
+            ${receiptCte},
+            m AS (INSERT INTO vehicle_maintenance (vehicle_id, status, title, done_on, odometer_at, expense_id) SELECT v.id, 'done', $10, $1::date, $7::int, (SELECT id FROM e) FROM v RETURNING id)
+       SELECT (SELECT id FROM m) AS mid, (SELECT id FROM e) AS eid`,
+      [...common, s.vehicle_id, c ? c.vehicle_category : null, s.odometer, ...photoParams, s.title])) as { mid: string | null; eid: string | null }[];
+  }
+  const mid = rows[0]?.mid;
+  if (mid === null || mid === undefined) throw new Error(s.maintenance_id !== null ? "That item was already completed or no longer exists." : "Vehicle not found.");
+  const eid = rows[0].eid === null || rows[0].eid === undefined ? null : Number(rows[0].eid);
+  await audit("complete_service", { id: Number(mid), amount_cents: c ? c.amount_cents : 0 });
+  if (eid !== null) await audit("add_vehicle_expense", { id: eid, category: c!.vehicle_category, amount_cents: c!.amount_cents });
+  if (eid !== null && photo) await audit("add_receipt", { expense_id: eid, bytes: photo.length });
+  return { maintenanceId: Number(mid), expenseId: eid };
+}
+
+/** Removes a plan or a log line only. A paid expense stays in the books (delete it on the Vehicle expenses page). */
+export async function deleteMaintenance(id: number): Promise<void> {
+  await sql()`DELETE FROM vehicle_maintenance WHERE id = ${id}`;
+  await audit("delete_maintenance", { id });
+}
+
+/** The year's vehicle tax rule. No row = standard mileage. */
+export async function listVehicleRules(): Promise<Record<number, VehicleTaxRule>> {
+  const rows = await sql()`SELECT tax_year, method, business_use_percent, business_use_confirmed FROM vehicle_tax_method`;
+  const out: Record<number, VehicleTaxRule> = {};
+  for (const r of rows) if (isTaxMethod(r.method)) out[Number(r.tax_year)] = { method: r.method, businessUsePercent: r.business_use_percent === null ? null : Number(r.business_use_percent), businessUseConfirmed: r.business_use_confirmed === true || r.business_use_confirmed === "t" || r.business_use_confirmed === "true" };
+  return out;
+}
+export const ruleFor = (rules: Record<number, VehicleTaxRule>, year: number): VehicleTaxRule => rules[year] ?? STANDARD_RULE;
+
+/** Saves the year's choice. A percentage can only be marked confirmed once it exists; the stored percentage is kept when switching methods (it is just not used under standard mileage). */
+export async function setVehicleRule(year: number, rule: VehicleTaxRule): Promise<void> {
+  const confirmed = rule.businessUsePercent !== null && rule.businessUseConfirmed;
+  await sql()`INSERT INTO vehicle_tax_method (tax_year, method, business_use_percent, business_use_confirmed) VALUES (${year}, ${rule.method}, ${rule.businessUsePercent}, ${confirmed})
+    ON CONFLICT (tax_year) DO UPDATE SET method = EXCLUDED.method, business_use_percent = EXCLUDED.business_use_percent, business_use_confirmed = EXCLUDED.business_use_confirmed, updated_at = now()`;
+  await audit("set_vehicle_method", { tax_year: year, kind: rule.method });
+}
+
+/** Which kind of vehicle cost each expense is (parking_tolls, fuel, ...), so tax estimates can tell them apart. Expenses with no detail row are simply absent. */
+export async function vehicleCategoryMap(from: string, to: string): Promise<Map<number, string>> {
+  const rows = await sql()`SELECT d.expense_id, d.vehicle_category FROM vehicle_expense_details d JOIN expenses e ON e.id = d.expense_id WHERE e.spent_on BETWEEN ${from}::date AND ${to}::date`;
+  return new Map(rows.map((r) => [Number(r.expense_id), r.vehicle_category as string]));
+}
+export const withVehicleCategories = <T extends { id: number }>(list: readonly T[], map: Map<number, string>): (T & { vehicle_category?: string })[] =>
+  list.map((e) => (map.has(e.id) ? { ...e, vehicle_category: map.get(e.id) } : e));
+
 
 export async function countReceipts(expenseId: number): Promise<number> {
   return Number((await sql()`SELECT count(*) AS n FROM expense_receipts WHERE expense_id = ${expenseId}`)[0].n);
@@ -481,7 +639,10 @@ export async function loadPacketInput(year: number, today: string): Promise<Pack
   ]);
   const items = await listItems(movements);
   const expired = expiryAlerts(items, movements, uses, warn, today).filter((a) => a.status === "expired").length;
-  return { year, income, expenses, trips, rules, forms, payers, payments, inventory: inventoryReport(items, movements, from, to), expiredLots: expired, lastImportRefunds: refunds?.n ?? 0 };
+  const hasVehicles = ((await schemaVersion()) ?? 0) >= 11;
+  const vehicleRule = hasVehicles ? ruleFor(await listVehicleRules(), year) : STANDARD_RULE;
+  const taggedExpenses = hasVehicles ? withVehicleCategories(expenses, await vehicleCategoryMap(from, to)) : expenses;
+  return { year, income, expenses: taggedExpenses, trips, rules, forms, payers, payments, inventory: inventoryReport(items, movements, from, to), expiredLots: expired, lastImportRefunds: refunds?.n ?? 0, vehicleRule };
 }
 
 // ---- Phase 5: whole-year lists that must never be silently cut short, and the activity log ----
