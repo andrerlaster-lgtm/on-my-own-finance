@@ -17,7 +17,7 @@ const json = (v) => (typeof v === "string" ? JSON.parse(v) : v);
   const sql = neon(process.env.DATABASE_URL);
   for (const stmt of S.schemaStatements) await sql.query(stmt);
   for (const name of S.EXPORT_TABLES) {
-    if (name === "app_meta") continue;
+    if (name === "app_meta" || name === "appointment_services") continue; // seeded by the schema statements above
     const n = Number((await sql.query(`SELECT count(*) AS n FROM ${name}`))[0].n);
     if (n > 0) { console.error(`Refusing to restore: ${name} already has ${n} rows. Use a new empty database.`); process.exit(1); }
   }
@@ -28,12 +28,15 @@ const json = (v) => (typeof v === "string" ? JSON.parse(v) : v);
         const bytes = read(F.receiptFile(r.id));
         await sql.query("INSERT INTO expense_receipts (id, expense_id, content_type, bytes_len, data, created_at) VALUES ($1, $2, $3, $4, decode($5, 'base64'), $6)", [r.id, r.expense_id, r.content_type, r.bytes_len, Buffer.from(bytes).toString("base64"), r.created_at]);
       }
+    } else if (name === "appointment_services") {
+      for (let i = 0; i < rows.length; i += 200) await sql.query(`INSERT INTO appointment_services SELECT * FROM jsonb_populate_recordset(NULL::appointment_services, $1::jsonb)
+        ON CONFLICT (code) DO UPDATE SET label = EXCLUDED.label, default_minutes = EXCLUDED.default_minutes, sort_order = EXCLUDED.sort_order, active = EXCLUDED.active, created_at = EXCLUDED.created_at`, [JSON.stringify(rows.slice(i, i + 200))]);
     } else if (name === "app_meta") {
       for (const r of rows) await sql.query("INSERT INTO app_meta (key, value, updated_at) VALUES ($1, $2, $3) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at", [r.key, r.value, r.updated_at]);
     } else {
       for (let i = 0; i < rows.length; i += 200) await sql.query(`INSERT INTO ${name} SELECT * FROM jsonb_populate_recordset(NULL::${name}, $1::jsonb)`, [JSON.stringify(rows.slice(i, i + 200))]);
     }
-    if (!["app_meta", "tax_year_rules", "income_entry_payers", "inventory_settings"].includes(name)) {
+    if (!["app_meta", "tax_year_rules", "income_entry_payers", "inventory_settings", "appointment_services"].includes(name)) {
       await sql.query(`SELECT setval(pg_get_serial_sequence('${name}', 'id'), COALESCE(MAX(id), 1), MAX(id) IS NOT NULL) FROM ${name}`);
     }
   }

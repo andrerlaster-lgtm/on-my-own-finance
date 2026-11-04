@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { formatCents } from "@/lib/money";
+import { financeLabel } from "@/lib/finance";
 import { STATUS_LABELS, TYPE_LABELS, clock, continuation, dayLabel, startLabel, toLocal, type Appointment } from "@/lib/schedule";
 
 /**
@@ -9,12 +11,13 @@ export function AppointmentRow({ a, serviceLabel, compact = false, day }: { a: A
   const s = toLocal(a.starts_at);
   const c = day ? continuation(a, day) : { fromPrev: false, toNext: false };
   const when = c.fromPrev ? `From ${dayLabel(s.date)}` : clock(s.time);
+  const money = a.status === "canceled" ? "" : `${a.price_cents === null ? "" : `${formatCents(a.price_cents)} · `}${financeLabel(a.status, a.price_cents, a.paid_cents)}`;
   const note = c.fromPrev ? "continues from the day before" : c.toNext ? "continues past midnight" : "";
   return (
     <li className={`entry appt appt-${a.status}`}>
       <span className="what"><Link href={`/secretary/${a.id}`}>{compact ? `${when} ` : `${when} · `}{serviceLabel}</Link></span>
       <span className={`pill pill-${a.status}`}>{STATUS_LABELS[a.status]}</span>
-      <span className="meta">{compact ? `${TYPE_LABELS[a.type]}${note ? ` · ${note}` : ""}` : `${startLabel(a)} · ${TYPE_LABELS[a.type]} · #${a.id}${note ? ` · ${note}` : ""}`}</span>
+      <span className="meta">{compact ? `${TYPE_LABELS[a.type]}${money ? ` · ${money}` : ""}${note ? ` · ${note}` : ""}` : `${startLabel(a)} · ${TYPE_LABELS[a.type]} · #${a.id}${money ? ` · ${money}` : ""}${note ? ` · ${note}` : ""}`}</span>
     </li>
   );
 }

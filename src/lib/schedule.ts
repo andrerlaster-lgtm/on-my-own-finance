@@ -1,4 +1,5 @@
 import { addDays, parseDate } from "./dates";
+import { parsePrice } from "./finance";
 
 /*
  * Secretary: appointments (Phase 1A, internal only). Pure logic; the database and pages call it.
@@ -63,6 +64,8 @@ export interface Appointment {
   id: number; type: AppointmentType; status: Status; service_code: string;
   starts_at: number; ends_at: number; // milliseconds since 1970 (UTC instants)
   cancel_reason: CancelReason | null; source: string; external_ref: string | null;
+  /** Service price in cents: null = none recorded (older appointments), 0 = explicitly no charge. */
+  price_cents: number | null; /** Total received so far, in cents. */ paid_cents: number;
 }
 
 /* ---------------- time zone ---------------- */
@@ -167,24 +170,27 @@ export function checkTransition(from: Status, to: Status, startsAt: number, now:
 }
 
 /* ---------------- forms ---------------- */
-export interface AppointmentInput { type: AppointmentType; service_code: string; starts_at: number; ends_at: number; ambiguous: boolean }
+export interface AppointmentInput { type: AppointmentType; service_code: string; starts_at: number; ends_at: number; ambiguous: boolean; price_cents: number | null }
 export type Parsed<T> = { ok: true; value: T } | { ok: false; errors: string[] };
 
 /**
  * `keepMinutes`: when editing, the appointment's existing window, so changing the service or type never silently changes its length.
  * Any "length" sent by a browser is ignored.
  */
-export function parseAppointmentForm(f: Record<string, string | undefined>, services: readonly Pick<Service, "code" | "active">[], keepMinutes?: number): Parsed<AppointmentInput> {
+export function parseAppointmentForm(f: Record<string, string | undefined>, services: readonly Pick<Service, "code" | "active">[], keepMinutes?: number, existingPrice?: number | null): Parsed<AppointmentInput> {
   const errors: string[] = [];
   const type = f.type as AppointmentType;
   if (!APPOINTMENT_TYPES.some((t) => t.id === type)) errors.push("Type: choose Office or Mobile.");
   const service = services.find((s) => s.code === f.service_code);
   if (!service || !service.active) errors.push("Service: choose one from the list.");
   const minutes = keepMinutes && Number.isInteger(keepMinutes) && keepMinutes > 0 ? keepMinutes : INTERNAL_MINUTES;
+  const price = parsePrice(f.price);
+  if (price === "bad") errors.push("Service price: dollars like 120 or 120.00 (0 if there is no charge).");
+  else if (price === null && existingPrice !== undefined && existingPrice !== null) errors.push("Service price: enter the price (0 if there is no charge). A recorded price can be changed but not left blank.");
   const start = fromLocal(f.date ?? "", f.time ?? "");
   if (!start.ok) errors.push(`Start: ${start.error}`);
   if (errors.length || !start.ok) return { ok: false, errors };
-  return { ok: true, value: { type, service_code: service!.code, starts_at: start.ms, ends_at: start.ms + minutes * 60000, ambiguous: start.ambiguous } };
+  return { ok: true, value: { type, service_code: service!.code, starts_at: start.ms, ends_at: start.ms + minutes * 60000, ambiguous: start.ambiguous, price_cents: price === "bad" ? null : price } };
 }
 
 export function parseCancelReason(raw: string | undefined): CancelReason | null {

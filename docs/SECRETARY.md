@@ -26,3 +26,39 @@ The booking site should create appointments by calling the same server-side func
 
 ## Not in Phase 1A
 Travel-time buffers, multiple providers or rooms, reminders and notifications, recurring appointments, editing the service list, and any customer-facing page.
+
+## Phase 2: price, payments, receivables and supplies (database version 11)
+
+One appointment, one completion workflow. Everything below reuses existing systems: payments are rows in **Income**, supplies are **Inventory** "use" movements, and nothing is added to the ledger.
+
+### Price and expected revenue
+- Each appointment has a **service price** (in cents). Empty = not decided; **0 = an explicit no-charge service**. Older appointments have no price until you record one.
+- The price can be changed while the appointment is open (never below what has already been received). A completed appointment's price is final.
+- A scheduled or confirmed appointment's unpaid price is **expected revenue**. It is shown on the day and week views and the Overview. It is **not income** and **not a receivable**. Canceling removes it.
+
+### Completing an appointment (one screen)
+Open an appointment → **Mark completed**. One form holds the service and price, the payment, and the supplies used. **Complete appointment** saves everything in a single database transaction, or nothing: if one part fails (for example not enough stock) the appointment stays open and no payment, income or stock change is saved. A second tap, a second tab or a double click cannot repeat anything: the appointment is locked while it saves and a repeat finds it already completed.
+- **Paid in full:** the payment goes into Income (once) → *Completed / Paid*.
+- **Part paid:** the amount received goes into Income; the rest becomes a receivable → *Completed / Partially Paid*.
+- **Unpaid** (empty or 0): no income; the whole price becomes a receivable → *Completed / Unpaid*.
+- **Advance payments** (recorded on an open appointment with **Record an advance payment**) are income on the day received and are never recorded again at completion; only the remainder is paid or owed.
+- **Canceled** before completion: no income, no receivable, cancellation history kept. A payment already received is **never reversed automatically**. Refunds and corrections must be entered deliberately (there is no automatic refund).
+- A completed appointment is final. Supply quantities are corrected with an inventory adjustment on the Inventory page (kept in the audit trail).
+
+### Accounts Receivable (More → Receivables)
+Lists completed appointments with their balance: appointment number, service, service date, original price, amount paid, balance and status. Record payments against a balance there or on the appointment page. The full payment history stays on the appointment. The receivable is calculated (price minus payments), never stored, so it cannot drift, and it never touches cash-basis income, the Profit & Loss or tax figures. (The chart of accounts still has its own "Accounts receivable" name; the cash-basis books do not post to it.)
+
+### Payment methods and Square
+Cash, Check, Bank transfer, Square / Card, Other, with the actual date received. Cash, check, bank transfer and other create exactly one Income entry per payment. **Square / Card never creates income itself**: your Square import is the single record of card income (with its real fees), so a card payment is recorded as *awaiting Square import*, still counts toward the appointment balance, and is linked to the imported entry:
+- automatically after an import, when you typed the **Square payment ID** and it matches the imported entry's ID exactly (and the revenue amount equals the payment), or at once if that entry was already imported; or
+- by your explicit choice on Accounts Receivable, from imported Square entries with exactly the same revenue amount.
+Matching is never done by amount and date alone. A Square entry can back only one appointment payment, and one Square ID can be used on only one payment. Anything that cannot be linked stays flagged on Accounts Receivable. The Square import itself, its fees and its duplicate checks are unchanged.
+
+### Supplies
+The completion form lists your Inventory items with what is on hand; enter only what you used (all optional, different quantities per item). Each becomes a normal inventory **use** movement dated the service date, linked to the appointment number, taken earliest-expiring lot first. Stock can never go negative; the item rows are locked while saving and re-checked, so two appointments racing for the last units cannot both succeed. Inventory valuation and cost-of-supplies accounting come from those movements exactly as before: no expense is created. Canceling never returns or consumes stock.
+
+### Reorder warnings
+The existing reorder level is the only rule: an item at or below its level shows **Reorder needed** on the Overview, the Inventory page and the completion screen, and the appointment page lists the items your completion just pushed to or below their level.
+
+### Tables, backups and safety
+New tables `appointment_payments` and `appointment_supply_uses`, plus two columns on `appointments` (`price_cents`, `completed_at`), are in the export, `npm run backup` and the restore order (restore also upserts the seeded service list). Income created from an appointment payment cannot be deleted from the Income page. Nothing here stores a name, phone, address, date of birth or medical detail; the only typed value is an optional Square payment ID.

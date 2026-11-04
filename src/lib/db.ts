@@ -12,6 +12,7 @@ import { checkLotConsistency, expiryAlerts, inventoryReport, lotBalances, sugges
 import type { PacketInput } from "./packet";
 import type { Appointment, AppointmentInput, Service, Status, CancelReason } from "./schedule";
 import { conflictText, findConflicts } from "./schedule";
+import { dbErrorText, dbErrorCode, planSupplies, stockToken, type AppointmentPayment, type CompletionInput, type PaymentInput } from "./finance";
 
 /** Neon over HTTP: one statement per query, no connection to keep open. Only used after requireOwner(). */
 export const databaseConfigured = (): boolean => Boolean(process.env.DATABASE_URL);
@@ -143,10 +144,13 @@ export async function setVisits(id: number, visits: number): Promise<void> {
   if (rows.length) await audit("set_visits", { id, visits });
 }
 
-/** Only hand-entered rows can be deleted; imported rows are removed by re-importing, never here. */
+/** Only hand-entered rows can be deleted; imported rows are removed by re-importing, never here. Income that came from an appointment payment is protected by its link (refused, nothing changes). */
 export async function deleteManualIncome(id: number): Promise<boolean> {
-  const rows = await sql()`WITH l AS (DELETE FROM income_entry_payers WHERE income_id = ${id} AND EXISTS (SELECT 1 FROM income_entries WHERE id = ${id} AND external_id IS NULL))
-                           DELETE FROM income_entries WHERE id = ${id} AND external_id IS NULL RETURNING id`;
+  let rows;
+  try {
+    rows = await sql()`WITH l AS (DELETE FROM income_entry_payers WHERE income_id = ${id} AND EXISTS (SELECT 1 FROM income_entries WHERE id = ${id} AND external_id IS NULL))
+                       DELETE FROM income_entries WHERE id = ${id} AND external_id IS NULL RETURNING id`;
+  } catch (e) { if ((e as { code?: string })?.code === "23503" || /foreign key/i.test((e as Error)?.message ?? "")) return false; throw e; }
   if (rows.length) await audit("delete_income", { id });
   return rows.length > 0;
 }
@@ -188,6 +192,7 @@ export async function importSquareRows(rows: ImportRow[], counts: Counts, visits
   const duplicates = counts.duplicateInFile + (rows.length - added);
   if (added !== fresh.length) await sql()`UPDATE import_batches SET rows_added = ${added}, rows_duplicate = ${duplicates} WHERE id = ${batch}`;
   await audit("import_square", { batch, added, duplicates, refund_rows_flagged: counts.refund, skipped: counts.failed + counts.uncertain });
+  if (((await schemaVersion()) ?? 0) >= 11) await reconcileSquareAuto(); // appointment payments waiting for this import, matched by exact Square payment ID only
   return { added, duplicates };
 }
 
@@ -508,8 +513,9 @@ const toMs = (v: unknown): number => Number(v);
 const apptFrom = (r: Record<string, unknown>): Appointment => ({
   id: Number(r.id), type: r.type as Appointment["type"], status: r.status as Status, service_code: r.service_code as string,
   starts_at: toMs(r.starts_ms), ends_at: toMs(r.ends_ms), cancel_reason: (r.cancel_reason as CancelReason | null) ?? null, source: r.source as string, external_ref: (r.external_ref as string | null) ?? null,
+  price_cents: r.price_cents === null || r.price_cents === undefined ? null : Number(r.price_cents), paid_cents: Number(r.paid_cents ?? 0),
 });
-const APPT_COLS = `id, type, status, service_code, (extract(epoch from starts_at) * 1000)::bigint AS starts_ms, (extract(epoch from ends_at) * 1000)::bigint AS ends_ms, cancel_reason, source, external_ref`;
+const APPT_COLS = `id, type, status, service_code, (extract(epoch from starts_at) * 1000)::bigint AS starts_ms, (extract(epoch from ends_at) * 1000)::bigint AS ends_ms, cancel_reason, source, external_ref, price_cents, coalesce((SELECT sum(p.amount_cents) FROM appointment_payments p WHERE p.appointment_id = appointments.id), 0)::bigint AS paid_cents`;
 const iso = (ms: number) => new Date(ms).toISOString();
 
 export async function listServices(): Promise<Service[]> {
@@ -547,7 +553,7 @@ export async function addAppointment(v: AppointmentInput): Promise<SaveResult> {
   const clash = findConflicts(await overlapping(v.starts_at, v.ends_at), { starts_at: v.starts_at, ends_at: v.ends_at, status: "scheduled" });
   if (clash.length) return { ok: false, error: conflictText(clash) };
   try {
-    const rows = await sql().query(`INSERT INTO appointments (type, service_code, starts_at, ends_at) VALUES ($1, $2, $3::timestamptz, $4::timestamptz) RETURNING id`, [v.type, v.service_code, iso(v.starts_at), iso(v.ends_at)]);
+    const rows = await sql().query(`INSERT INTO appointments (type, service_code, starts_at, ends_at, price_cents) VALUES ($1, $2, $3::timestamptz, $4::timestamptz, $5::bigint) RETURNING id`, [v.type, v.service_code, iso(v.starts_at), iso(v.ends_at), v.price_cents]);
     const id = Number((rows as { id: string }[])[0].id);
     await audit("add_appointment", { id, type: v.type, service: v.service_code });
     return { ok: true, id };
@@ -559,22 +565,151 @@ export async function updateAppointment(id: number, v: AppointmentInput): Promis
   const clash = findConflicts(await overlapping(v.starts_at, v.ends_at), { id, starts_at: v.starts_at, ends_at: v.ends_at, status: "scheduled" });
   if (clash.length) return { ok: false, error: conflictText(clash) };
   try {
-    const rows = await sql().query(`UPDATE appointments SET type = $2, service_code = $3, starts_at = $4::timestamptz, ends_at = $5::timestamptz, updated_at = now()
-                                    WHERE id = $1::bigint AND status IN ('scheduled', 'confirmed') RETURNING id`, [id, v.type, v.service_code, iso(v.starts_at), iso(v.ends_at)]);
-    if (!rows.length) return { ok: false, error: "That appointment can no longer be edited (it is completed, canceled or gone)." };
+    // The price may be corrected while the appointment is open, but never below what has already been received.
+    const rows = await sql().query(`UPDATE appointments SET type = $2, service_code = $3, starts_at = $4::timestamptz, ends_at = $5::timestamptz, price_cents = $6::bigint, updated_at = now()
+                                    WHERE id = $1::bigint AND status IN ('scheduled', 'confirmed')
+                                      AND ($6::bigint IS NULL OR $6::bigint >= (SELECT coalesce(sum(amount_cents), 0) FROM appointment_payments WHERE appointment_id = $1::bigint)) RETURNING id`,
+      [id, v.type, v.service_code, iso(v.starts_at), iso(v.ends_at), v.price_cents]);
+    if (!rows.length) return { ok: false, error: "That appointment can no longer be edited, or the price is lower than what has already been received." };
     await audit("update_appointment", { id, type: v.type, service: v.service_code });
     return { ok: true, id };
   } catch (e) { if (isOverlapError(e)) return { ok: false, error: RACE }; throw e; }
 }
 
-/** Moves an appointment to a new status. `from` must still be its current status, so a stale page cannot overwrite a newer change. Reinstating a canceled one re-checks for overlaps. */
+/**
+ * Moves an appointment to a new status. `from` must still be its current status, so a stale page cannot overwrite a newer change. Reinstating a canceled one re-checks for overlaps.
+ * Completed is final, and an appointment can only BECOME completed through completeAppointment (which records its payment and supplies in the same transaction).
+ */
 export async function setAppointmentStatus(id: number, from: Status, to: Status, reason: CancelReason | null): Promise<SaveResult> {
   try {
     const rows = await sql().query(
       `UPDATE appointments SET status = $3, canceled_at = CASE WHEN $3 = 'canceled' THEN now() ELSE NULL END, cancel_reason = CASE WHEN $3 = 'canceled' THEN $4 ELSE NULL END, updated_at = now()
-       WHERE id = $1::bigint AND status = $2 RETURNING id`, [id, from, to, to === "canceled" ? reason ?? "other" : null]);
+       WHERE id = $1::bigint AND status = $2 AND $2 <> 'completed' AND $3 <> 'completed' RETURNING id`, [id, from, to, to === "canceled" ? reason ?? "other" : null]);
     if (!rows.length) return { ok: false, error: "That appointment changed while you were looking at it. Open it again." };
     await audit("set_appointment_status", { id, status: to });
     return { ok: true, id };
   } catch (e) { if (isOverlapError(e)) return { ok: false, error: "That time is now taken by another appointment, so this one cannot be reinstated." }; throw e; }
+}
+
+// ---- Appointment money and supplies (schema version 11). Payments reuse income_entries; supplies reuse inventory movements; receivables are calculated, never stored. ----
+const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+const paymentFrom = (r: Record<string, unknown>): AppointmentPayment => ({
+  id: Number(r.id), appointment_id: Number(r.appointment_id), amount_cents: Number(r.amount_cents), method: r.method as AppointmentPayment["method"], paid_on: r.paid_on as string,
+  income_entry_id: num(r.income_entry_id), reconcile_state: r.reconcile_state as AppointmentPayment["reconcile_state"], square_payment_id: (r.square_payment_id as string | null) ?? null,
+});
+const failure = (e: unknown): { ok: false; error: string } => { const t = dbErrorText((e as Error)?.message ?? ""); if (t) return { ok: false, error: t }; throw e; };
+
+export async function listAppointmentPayments(appointmentId: number): Promise<AppointmentPayment[]> {
+  const rows = await sql().query(`SELECT id, appointment_id, amount_cents, method, to_char(paid_on, 'YYYY-MM-DD') AS paid_on, income_entry_id, reconcile_state, square_payment_id
+                                  FROM appointment_payments WHERE appointment_id = $1::bigint ORDER BY paid_on, id`, [appointmentId]);
+  return (rows as Record<string, unknown>[]).map(paymentFrom);
+}
+
+export interface SupplyUse { movement_id: number; item_id: number; label: string; unit: string; quantity: number; moved_on: string }
+export async function listSupplyUses(appointmentId: number): Promise<SupplyUse[]> {
+  const rows = await sql().query(`SELECT m.id AS movement_id, m.item_id, i.label, i.unit, m.quantity, to_char(m.moved_on, 'YYYY-MM-DD') AS moved_on
+                                  FROM appointment_supply_uses u JOIN inventory_movements m ON m.id = u.movement_id JOIN inventory_items i ON i.id = m.item_id
+                                  WHERE u.appointment_id = $1::bigint ORDER BY m.id`, [appointmentId]);
+  return (rows as Record<string, unknown>[]).map((r) => ({ movement_id: Number(r.movement_id), item_id: Number(r.item_id), label: r.label as string, unit: r.unit as string, quantity: Number(r.quantity), moved_on: r.moved_on as string }));
+}
+
+/** One payment (an advance on an open appointment, or a payment against a receivable). Saved in one statement; a repeat of the same form key returns the first result. */
+export async function recordAppointmentPayment(appointmentId: number, v: PaymentInput): Promise<{ ok: true; id: number } | { ok: false; error: string }> {
+  try {
+    const r = await sql().query(`SELECT record_appointment_payment($1::jsonb) AS id`, [JSON.stringify({ appointment_id: appointmentId, amount_cents: v.amount_cents, method: v.method, paid_on: v.paid_on, square_payment_id: v.square_payment_id, request_key: v.request_key })]);
+    const id = Number((r as { id: string }[])[0].id);
+    await audit("record_appointment_payment", { appointment: appointmentId, id, amount_cents: v.amount_cents, kind: v.method });
+    return { ok: true, id };
+  } catch (e) { return failure(e); }
+}
+
+export interface CompletionResult { ok: true; paymentId: number | null; items: { item_id: number; on_hand: number }[] }
+/**
+ * The single completion workflow. Validates supplies with the Inventory rules, then makes ONE database call (complete_appointment) that sets the price, records the payment,
+ * takes the supplies out of stock and marks the appointment completed, all in one transaction. If anything fails nothing is saved. If stock changed in between, the supplies
+ * are re-checked once automatically.
+ */
+export async function completeAppointment(appointmentId: number, v: CompletionInput, movedOn: string): Promise<CompletionResult | { ok: false; error: string }> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const itemIds = v.supplies.map((s) => s.item_id);
+    const found = itemIds.length ? await sql().query(`SELECT id, label FROM inventory_items WHERE id = ANY($1::bigint[])`, [itemIds]) : [];
+    const histories = [];
+    for (const it of found as { id: string; label: string }[]) histories.push({ id: Number(it.id), label: it.label, movements: await listMovements(Number(it.id)), lotUses: await listLotUses(Number(it.id)) });
+    const plan = planSupplies(v.supplies, histories, movedOn);
+    if (!plan.ok) return { ok: false, error: plan.error };
+    try {
+      const r = await sql().query(`SELECT complete_appointment($1::jsonb) AS result`, [JSON.stringify({
+        appointment_id: appointmentId, price_cents: v.price_cents, payment: v.payment, supplies: plan.uses })]);
+      const res = (typeof (r as { result: unknown }[])[0].result === "string" ? JSON.parse((r as { result: string }[])[0].result) : (r as { result: unknown }[])[0].result) as { payment_id: number | null; movements: { item_id: number; on_hand: number }[] };
+      await audit("complete_appointment", { appointment: appointmentId, amount_cents: v.payment?.amount_cents ?? 0, rows: res.movements.length });
+      if (v.payment) await audit("record_appointment_payment", { appointment: appointmentId, id: res.payment_id, amount_cents: v.payment.amount_cents, kind: v.payment.method });
+      return { ok: true, paymentId: res.payment_id === null ? null : Number(res.payment_id), items: res.movements.map((m) => ({ item_id: Number(m.item_id), on_hand: Number(m.on_hand) })) };
+    } catch (e) {
+      if (dbErrorCode((e as Error)?.message ?? "") === "STALE_INVENTORY" && attempt === 0) continue;
+      return failure(e);
+    }
+  }
+  return { ok: false, error: "Inventory changed while you were working. Review the supplies and try again." };
+}
+
+export interface ReceivableRow { id: number; service_date: string; service: string; price_cents: number; paid_cents: number }
+/** Completed appointments with their price and amount received. By default only those with a balance left. */
+export async function listReceivables(includePaid = false): Promise<ReceivableRow[]> {
+  const rows = await sql().query(
+    `SELECT a.id, to_char(a.starts_at AT TIME ZONE 'America/Chicago', 'YYYY-MM-DD') AS service_date, s.label AS service, a.price_cents, coalesce(sum(p.amount_cents), 0)::bigint AS paid
+     FROM appointments a JOIN appointment_services s ON s.code = a.service_code LEFT JOIN appointment_payments p ON p.appointment_id = a.id
+     WHERE a.status = 'completed' AND a.price_cents IS NOT NULL
+     GROUP BY a.id, s.label HAVING ($1::boolean OR a.price_cents > coalesce(sum(p.amount_cents), 0))
+     ORDER BY a.starts_at, a.id`, [includePaid]);
+  return (rows as Record<string, unknown>[]).map((r) => ({ id: Number(r.id), service_date: r.service_date as string, service: r.service as string, price_cents: Number(r.price_cents), paid_cents: Number(r.paid) }));
+}
+
+export interface AwaitingSquare { payment: AppointmentPayment; service_date: string }
+export async function listAwaitingSquare(): Promise<AwaitingSquare[]> {
+  const rows = await sql().query(`SELECT p.id, p.appointment_id, p.amount_cents, p.method, to_char(p.paid_on, 'YYYY-MM-DD') AS paid_on, p.income_entry_id, p.reconcile_state, p.square_payment_id,
+                                         to_char(a.starts_at AT TIME ZONE 'America/Chicago', 'YYYY-MM-DD') AS service_date
+                                  FROM appointment_payments p JOIN appointments a ON a.id = p.appointment_id WHERE p.reconcile_state = 'awaiting_square' ORDER BY p.paid_on, p.id`);
+  return (rows as Record<string, unknown>[]).map((r) => ({ payment: paymentFrom(r), service_date: r.service_date as string }));
+}
+
+export interface SquareCandidate { id: number; occurred_on: string; gross_cents: number; tail: string }
+/** Imported Square entries not yet linked to any appointment payment, for an EXPLICIT choice. Only entries with exactly the same revenue amount are offered; date is shown, never used to decide. */
+export async function squareCandidates(paymentId: number): Promise<SquareCandidate[]> {
+  const rows = await sql().query(
+    `SELECT i.id, to_char(i.occurred_on, 'YYYY-MM-DD') AS occurred_on, i.gross_cents, right(i.external_id, 6) AS tail
+     FROM income_entries i JOIN appointment_payments p ON p.id = $1::bigint
+     WHERE p.reconcile_state = 'awaiting_square' AND i.source = 'square' AND i.external_id IS NOT NULL AND i.gross_cents = p.amount_cents
+       AND NOT EXISTS (SELECT 1 FROM appointment_payments q WHERE q.income_entry_id = i.id) ORDER BY i.occurred_on DESC, i.id DESC LIMIT 20`, [paymentId]);
+  return (rows as Record<string, unknown>[]).map((r) => ({ id: Number(r.id), occurred_on: r.occurred_on as string, gross_cents: Number(r.gross_cents), tail: r.tail as string }));
+}
+
+/** Links a waiting payment to an imported Square entry the user chose. Refused unless the entry is Square, unlinked, and has exactly the payment's revenue amount. */
+export async function linkSquarePayment(paymentId: number, incomeEntryId: number): Promise<boolean> {
+  const rows = await sql().query(
+    `UPDATE appointment_payments p SET income_entry_id = e.id, reconcile_state = 'matched'
+     FROM income_entries e WHERE p.id = $1::bigint AND p.reconcile_state = 'awaiting_square' AND e.id = $2::bigint AND e.source = 'square' AND e.external_id IS NOT NULL
+       AND e.gross_cents = p.amount_cents AND NOT EXISTS (SELECT 1 FROM appointment_payments q WHERE q.income_entry_id = e.id) RETURNING p.id`, [paymentId, incomeEntryId]);
+  if (rows.length) await audit("link_square_payment", { id: paymentId });
+  return rows.length > 0;
+}
+
+/** After a Square import: link waiting payments whose Square payment ID exactly equals an imported entry's ID (and amount). Nothing is matched by amount and date. */
+export async function reconcileSquareAuto(): Promise<number> {
+  const rows = await sql().query(
+    `UPDATE appointment_payments p SET income_entry_id = e.id, reconcile_state = 'matched'
+     FROM income_entries e WHERE p.reconcile_state = 'awaiting_square' AND p.square_payment_id IS NOT NULL AND e.source = 'square' AND e.external_id = p.square_payment_id
+       AND e.gross_cents = p.amount_cents AND NOT EXISTS (SELECT 1 FROM appointment_payments q WHERE q.income_entry_id = e.id) RETURNING p.id`);
+  if (rows.length) await audit("link_square_payment", { rows: rows.length });
+  return rows.length;
+}
+
+/** Totals for the Overview: expected revenue on open appointments and receivables on completed ones (calculated, nothing stored). */
+export async function financeTotals(): Promise<{ expectedCents: number; receivableCents: number; receivableCount: number; awaitingSquare: number }> {
+  const r = (await sql()`
+    WITH t AS (SELECT a.status, a.price_cents, coalesce((SELECT sum(p.amount_cents) FROM appointment_payments p WHERE p.appointment_id = a.id), 0) AS paid FROM appointments a WHERE a.price_cents IS NOT NULL AND a.status IN ('scheduled', 'confirmed', 'completed'))
+    SELECT coalesce(sum(greatest(price_cents - paid, 0)) FILTER (WHERE status IN ('scheduled', 'confirmed')), 0)::bigint AS expected,
+           coalesce(sum(greatest(price_cents - paid, 0)) FILTER (WHERE status = 'completed'), 0)::bigint AS receivable,
+           count(*) FILTER (WHERE status = 'completed' AND price_cents > paid)::int AS rcount,
+           (SELECT count(*) FROM appointment_payments WHERE reconcile_state = 'awaiting_square')::int AS awaiting FROM t`)[0];
+  return { expectedCents: Number(r.expected), receivableCents: Number(r.receivable), receivableCount: Number(r.rcount), awaitingSquare: Number(r.awaiting) };
 }

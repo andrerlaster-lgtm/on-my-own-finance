@@ -82,3 +82,11 @@ No patient or customer names, contact details or health information are stored. 
 - It only fills **empty** fields, never changes a value you entered, and leaves every "confirmed with my tax preparer" box unchecked. The set-aside percent is not published; your preparer sets it.
 - **Mileage rate from July 1** is optional. When set, trips dated July 1 or later use it and earlier trips use the year's rate; the packet export shows both rates. Leave it empty for years with one rate.
 - These figures came from search results (IRS newsroom and tax-industry summaries), not from reading IRS.gov directly. Check them against irs.gov or with your preparer.
+
+## Appointment payments, receivables and supplies (database version 11)
+
+- **Income:** each non-Square appointment payment is one ordinary income entry (source Cash, Check, Bank transfer or Other, tax form "not decided", revenue = the amount received) created together with a link row in `appointment_payments`. It appears on the Income page, the ledger (Dr Cash and bank, Cr Service revenue) and tax summaries exactly once, on the date received.
+- **Square / Card:** creates no income. The Square import is the single source (gross, tip, fee). The appointment payment is linked to the imported entry by exact Square payment ID or an explicit choice, so card money is never counted twice and fees stay correct.
+- **Unpaid work:** expected revenue (open appointments) and receivables (completed, unpaid balances) are calculated figures, not ledger entries. On the cash basis they do not increase income, Profit & Loss or tax figures until money is received.
+- **Supplies:** recorded as inventory "use" movements linked to the appointment, so inventory value and "Medical supplies consumed" follow the existing weighted-average rules. Purchases remain inventory (not expenses) as before; nothing is expensed twice.
+- **Corrections:** nothing is reversed automatically. Existing income, payments and stock movements change only through deliberate steps (an inventory adjustment; a future refund/correction process).

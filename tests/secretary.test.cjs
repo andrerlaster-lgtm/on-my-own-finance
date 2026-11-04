@@ -95,7 +95,7 @@ test("the appointment form accepts only fixed choices and a real Chicago time; t
   assert.equal(f({ minutes: "240" }).value.ends_at - f({}).value.starts_at, 1800000, "a length sent by a browser is ignored");
   assert.equal(f({ date: "2026-11-01", time: "01:30" }).value.ambiguous, true);
   // extra fields a person might try to send are ignored, never stored
-  assert.deepEqual(Object.keys(f({ patient_name: "Jane Doe", phone: "5551234567", notes: "has diabetes" }).value).sort(), ["ambiguous", "ends_at", "service_code", "starts_at", "type"]);
+  assert.deepEqual(Object.keys(f({ patient_name: "Jane Doe", phone: "5551234567", notes: "has diabetes" }).value).sort(), ["ambiguous", "ends_at", "price_cents", "service_code", "starts_at", "type"]);
 });
 
 // ---------- privacy ----------
@@ -115,7 +115,7 @@ test("appointments store no names, contact details, medical details or free text
 // ---------- database, backups, accounting protection ----------
 test("version 9 only adds new tables; double bookings are blocked by the database itself; the website can integrate safely", () => {
   assert.ok(S.SCHEMA_VERSION >= 9);
-  const stmts = S.schemaStatements.filter((s) => /appointment/.test(s));
+  const stmts = S.schemaStatements.filter((s) => /appointment/.test(s) && !/appointment_payments|appointment_supply_uses|FUNCTION|ADD COLUMN/.test(s)); // the version 9 and 10 statements (version 11 has its own tests)
   assert.ok(stmts.every((s) => /^\s*(CREATE (UNIQUE )?(TABLE|INDEX) IF NOT EXISTS|INSERT INTO appointment_services|UPDATE appointment_services SET active = false)/.test(s)) && stmts.length === 7, "tables, the seed, two indexes and the version 10 service update, nothing else");
   assert.match(stmts.find((s) => /^\s*INSERT/.test(s)), /ON CONFLICT \(code\) DO NOTHING/);
   const t = stmts.find((s) => /CREATE TABLE IF NOT EXISTS appointments/.test(s));
@@ -139,11 +139,11 @@ test("new tables are in the export, the backup and the restore order (parents fi
 });
 
 test("the Secretary never touches money or supplies, and the accounting code cannot see appointments", () => {
-  const db = rd("src/lib/db.ts"), sec = db.slice(db.indexOf("// ---- Secretary"));
+  const db = rd("src/lib/db.ts"), sec = db.slice(db.indexOf("// ---- Secretary"), db.indexOf("// ---- Appointment money and supplies"));
   assert.doesNotMatch(sec, /income_entries|expenses|inventory_|journal_|accounts|tax_|mileage_|audit_log|receipt/i, "the Secretary code reads and writes only appointment tables (and the activity log through audit())".replace("audit_log|", ""));
   assert.doesNotMatch(sec, /INSERT INTO (income|expenses)|revenue/i);
   for (const f of ["src/lib/ledger.ts", "src/lib/accountingDb.ts", "src/lib/statements.ts", "src/lib/reports.ts", "src/lib/packet.ts", "src/lib/inventory.ts", "src/lib/income.ts", "src/lib/expenses.ts"]) assert.doesNotMatch(rd(f), /appointment|schedule/i, `${f} knows nothing about appointments`);
-  assert.doesNotMatch(rd("src/lib/schedule.ts").replace(/\/\*[\s\S]*?\*\//g, ""), /income|expense|inventory|revenue|cents/i, "scheduling logic has no money or stock concepts");
+  assert.doesNotMatch(rd("src/lib/schedule.ts").replace(/\/\*[\s\S]*?\*\//g, ""), /income|expense|inventory|revenue|(?<!price_|paid_)cents/i, "scheduling logic has no money or stock concepts (only the appointment's own price and amount received)");
 });
 
 test("Secretary is private, in the menu, on the dashboard, and the authentication code is untouched", () => {
@@ -159,8 +159,8 @@ test("Secretary is private, in the menu, on the dashboard, and the authenticatio
 });
 
 test("database writes are guarded: no double booking race, no stale status overwrite, only open appointments editable", () => {
-  const db = rd("src/lib/db.ts"), sec = db.slice(db.indexOf("// ---- Secretary"));
-  assert.match(sec, /isOverlapError/); assert.match(sec, /WHERE id = \$1::bigint AND status IN \('scheduled', 'confirmed'\)/); assert.match(sec, /WHERE id = \$1::bigint AND status = \$2 RETURNING id/);
+  const db = rd("src/lib/db.ts"), sec = db.slice(db.indexOf("// ---- Secretary"), db.indexOf("// ---- Appointment money and supplies"));
+  assert.match(sec, /isOverlapError/); assert.match(sec, /WHERE id = \$1::bigint AND status IN \('scheduled', 'confirmed'\)/); assert.match(sec, /WHERE id = \$1::bigint AND status = \$2 AND \$2 <> 'completed' AND \$3 <> 'completed' RETURNING id/);
   assert.doesNotMatch(sec, /DELETE FROM appointments/, "appointments are canceled, never deleted");
   assert.match(sec, /findConflicts\(await overlapping/);
 });
@@ -217,7 +217,7 @@ test("the calendar queries return appointments that overlap the window, so both 
   for (const f of ["src/app/secretary/page.tsx", "src/app/secretary/week/page.tsx", "src/app/page.tsx"]) assert.match(rd(f), /<AppointmentRow[^>]*day=\{/, `${f} marks continuing appointments`);
   assert.match(rd("src/app/secretary/week/page.tsx"), /groupByDate\(openOnly\(list\)\)/);
   const row = rd("src/components/AppointmentRow.tsx"); assert.match(row, /continues past midnight/); assert.match(row, /continues from the day before/);
-  assert.doesNotMatch(row + rd("src/lib/schedule.ts").replace(/\/\*[\s\S]*?\*\//g, ""), /income|expense|inventory|revenue|cents|patient|phone|address/i);
+  assert.doesNotMatch(row + rd("src/lib/schedule.ts").replace(/\/\*[\s\S]*?\*\//g, ""), /income|expense|inventory|revenue|patient|phone|address/i, "the calendar views carry no personal or accounting-internals text");
   assert.doesNotMatch(fn, /income|expenses|inventory_|journal_|accounts/);
 });
 
@@ -232,7 +232,7 @@ test("exactly four services are offered; the earlier ones are deactivated, never
   assert.match(v9seed, /ON CONFLICT \(code\) DO NOTHING/, "the version 9 seed is unchanged (it may already have run)");
   assert.match(upsert, /ON CONFLICT \(code\) DO UPDATE SET label = EXCLUDED\.label/); assert.doesNotMatch(upsert, /DELETE/);
   assert.match(retire, /^\s*UPDATE appointment_services SET active = false WHERE code IN \('specimen_collection', 'specimen_delivery', 'consultation', 'other_service'\) AND active$/, "only the four known earlier services are deactivated");
-  assert.doesNotMatch(S.schemaStatements.join("\n"), /DELETE FROM appointment|UPDATE appointments|DELETE FROM appointment_services|DROP TABLE/i, "existing appointments and service rows are never deleted or rewritten");
+  assert.doesNotMatch(S.schemaStatements.filter((s) => !/^\s*CREATE OR REPLACE FUNCTION/.test(s)).join("\n"), /DELETE FROM appointment|UPDATE appointments|DELETE FROM appointment_services|DROP TABLE/i, "the migration itself never deletes or rewrites existing appointments or service rows (the version 11 functions only act when you complete an appointment)");
   assert.ok(S.schemaStatements.indexOf(v9seed) < S.schemaStatements.indexOf(upsert) && S.schemaStatements.indexOf(upsert) < S.schemaStatements.indexOf(retire) && S.schemaStatements.indexOf(retire) < S.schemaStatements.length - 1, "runs after the version 9 seed and before the version stamp");
   // a service that was retired is still accepted when it is the appointment's own (editing), but never for a new choice
   const list = [{ code: "blood_draw", active: true }, { code: "consultation", active: false }];
@@ -245,7 +245,7 @@ test("exactly four services are offered; the earlier ones are deactivated, never
 
 test("the length is not asked for or shown anywhere; editing keeps an existing appointment's window; overlap protection is unchanged", () => {
   const ui = ["src/components/AppointmentForm.tsx", "src/components/AppointmentRow.tsx", "src/app/secretary/page.tsx", "src/app/secretary/week/page.tsx", "src/app/secretary/new/page.tsx", "src/app/secretary/[id]/page.tsx", "src/app/page.tsx"].map(rd).join("\n");
-  assert.doesNotMatch(ui, /name="minutes"|minutes<|\bminutes\b[^"]*<\/option>|DURATIONS|\bmin\b|{minutesOf\(a\)}[^)]*minutes|rangeLabel|spanLabel/, "no length field, no 'N min', no end times");
+  assert.doesNotMatch(ui, /name="minutes"|minutes<|\bminutes\b[^"]*<\/option>|DURATIONS|\bmin\b(?!=)|{minutesOf\(a\)}[^)]*minutes|rangeLabel|spanLabel/, "no length field, no 'N min', no end times");
   assert.equal(X.INTERNAL_MINUTES, 30); assert.equal(X.DURATIONS, undefined);
   const p = X.parseAppointmentForm({ date: "2026-11-04", time: "09:30", type: "office", service_code: "blood_draw", minutes: "5" }, [{ code: "blood_draw", active: true }]);
   assert.equal(p.value.ends_at - p.value.starts_at, 30 * 60000);

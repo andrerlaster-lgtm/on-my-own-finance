@@ -37,7 +37,8 @@
     "src/lib/journalForms.ts",
     "src/lib/xlsx.ts",
     "src/lib/pdfdoc.ts",
-    "src/lib/schedule.ts"
+    "src/lib/schedule.ts",
+    "src/lib/finance.ts"
   ],
   "exclude": [
     "node_modules"

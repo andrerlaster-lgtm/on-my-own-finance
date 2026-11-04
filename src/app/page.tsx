@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireOwner } from "@/lib/auth";
-import { databaseConfigured, databaseReady, schemaVersion, runSetup, listIncomeAll, lastImportRefunds, listItems, listExpensesAll, listTripsAll, getRules, listMovements, listLotUses, warnDaysByItem, listPayments, purgePendingTrips, listAppointments, listServices } from "@/lib/db";
+import { databaseConfigured, databaseReady, schemaVersion, runSetup, listIncomeAll, lastImportRefunds, listItems, listExpensesAll, listTripsAll, getRules, listMovements, listLotUses, warnDaysByItem, listPayments, purgePendingTrips, listAppointments, listServices, financeTotals } from "@/lib/db";
 import { setAside } from "@/lib/taxforms";
 import { expiryAlerts, type LotUse } from "@/lib/lots";
 import type { Movement } from "@/lib/inventory";
@@ -12,6 +12,7 @@ import { formatCents } from "@/lib/money";
 import { periodRanges, todayInChicago } from "@/lib/dates";
 import { SCHEMA_VERSION } from "@/lib/schema";
 import { dayBounds, openOnly, dayLabel } from "@/lib/schedule";
+import { expectedRevenue } from "@/lib/finance";
 import { AppointmentRow } from "@/components/AppointmentRow";
 import { envProblems } from "@/lib/env";
 import { revalidatePath } from "next/cache";
@@ -57,7 +58,8 @@ export default async function Home() {
   years.forEach((y, i) => { const r = rateRules[i]; if (r) rates[y] = { centsPerMile: r.mileage_rate_cents, confirmed: r.mileage_rate_confirmed, h2CentsPerMile: r.mileage_rate_h2_cents, h2Confirmed: r.mileage_rate_h2_confirmed }; });
   // Today's appointments (Secretary). A failure here must never hide the money dashboard.
   const dayB = dayBounds(today);
-  const [todaysAppts, apptServices] = ready && v >= 9 ? await Promise.all([listAppointments(dayB.from, dayB.to), listServices()]).catch(() => [null, null] as const) : [null, null] as const;
+  const [todaysAppts, apptServices] = ready && v >= 11 ? await Promise.all([listAppointments(dayB.from, dayB.to), listServices()]).catch(() => [null, null] as const) : [null, null] as const;
+  const money = ready && v >= 11 ? await financeTotals().catch(() => null) : null;
   const cols = [["This week", periods.week], ["This month", periods.month], ["This year", periods.year]] as const;
   return (
     <main>
@@ -71,7 +73,17 @@ export default async function Home() {
           <h2>Today&rsquo;s appointments <span className="muted">{dayLabel(today)} · {openOnly(todaysAppts).length}</span></h2>
           {openOnly(todaysAppts).length === 0 ? <p className="muted">None today. <Link href="/secretary/new">Add an appointment</Link></p>
             : <ul className="entries">{openOnly(todaysAppts).map((a) => <AppointmentRow key={a.id} a={a} day={today} serviceLabel={apptServices.find((s) => s.code === a.service_code)?.label ?? a.service_code} />)}</ul>}
-          <p className="muted"><Link href="/secretary">Open the Secretary calendar</Link></p>
+          <p className="muted">{openOnly(todaysAppts).some((a) => a.price_cents !== null && (a.status === "scheduled" || a.status === "confirmed")) ? `Expected revenue today (not yet received): ${formatCents(expectedRevenue(todaysAppts))} · ` : ""}<Link href="/secretary">Open the Secretary calendar</Link></p>
+        </div>
+      )}
+      {money && (money.expectedCents > 0 || money.receivableCents > 0 || money.awaitingSquare > 0) && (
+        <div className="card">
+          <h2>Appointment money <span className="muted">not income until received</span></h2>
+          <div className="grid2">
+            <div className="stat">Expected revenue (scheduled, not yet received)<b>{formatCents(money.expectedCents)}</b></div>
+            <div className="stat">Accounts receivable ({money.receivableCount})<b>{formatCents(money.receivableCents)}</b></div>
+          </div>
+          <p className="muted"><Link href="/receivables">Open Accounts Receivable</Link>{money.awaitingSquare > 0 ? ` · ${money.awaitingSquare} Square payment${money.awaitingSquare === 1 ? "" : "s"} waiting to be reconciled` : ""}</p>
         </div>
       )}
       {dash && (
@@ -101,7 +113,7 @@ export default async function Home() {
       </div>}
       {dash && (
         <>
-          {low.length > 0 && <div className="card"><h2>Low stock <span className="muted">{low.length} item{low.length === 1 ? "" : "s"}</span></h2><ul className="plain">{low.slice(0, 6).map((i) => <li key={i.id}><Link href={`/inventory/${i.id}`}>{i.label}</Link>: {i.stock.onHand} {i.unit} left</li>)}</ul>{low.length > 6 && <p className="muted"><Link href="/inventory">See all {low.length} in Supplies</Link></p>}</div>}
+          {low.length > 0 && <div className="card"><h2>Reorder needed <span className="muted">{low.length} item{low.length === 1 ? "" : "s"}</span></h2><ul className="plain">{low.slice(0, 6).map((i) => <li key={i.id}><Link href={`/inventory/${i.id}`}>{i.label}</Link>: {i.stock.onHand} {i.unit} left (reorder at {i.reorder_level})</li>)}</ul>{low.length > 6 && <p className="muted"><Link href="/inventory">See all {low.length} in Supplies</Link></p>}</div>}
           {expiring.length > 0 && <div className="card"><h2>Expiring supplies <span className="muted">{expiring.length} lot{expiring.length === 1 ? "" : "s"}</span></h2><ul className="plain">{expiring.slice(0, 6).map((a) => <li key={`${a.item_id}${a.lot_number}`}><Link href={`/inventory/${a.item_id}`}>{a.label}</Link> lot {a.lot_number}: {a.onHand} {a.unit}, {a.status === "expired" ? "expired" : `expires in ${a.daysLeft} day${a.daysLeft === 1 ? "" : "s"}`}</li>)}</ul>{expiring.length > 6 && <p className="muted"><Link href="/inventory">See all {expiring.length} in Supplies</Link></p>}</div>}
           {yearRules && (version ?? 0) >= 5 && (() => {
             const t = summarize(entries, periods.year), profit = estimateProfit(t.netAfterFees, summarizeExpenses(exps, periods.year)), a = setAside(profit, yearRules, yearPaid);

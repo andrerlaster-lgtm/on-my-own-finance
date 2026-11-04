@@ -1,6 +1,6 @@
 # On My Own Finance
 
-Private business-finance tracker (visits, revenue, fees, expenses, profit, mileage, inventory, year-end export for the tax preparer). One user, GitHub sign-in restricted to the owner's account. Not tax filing software. Secretary (More → Secretary): private appointment calendar with no personal details; see docs/SECRETARY.md.
+Private business-finance tracker (visits, revenue, fees, expenses, profit, mileage, inventory, year-end export for the tax preparer). One user, GitHub sign-in restricted to the owner's account. Not tax filing software. Secretary (More → Secretary): private appointment calendar with no personal details; see docs/SECRETARY.md. Appointments also carry a price, payments (into Income), receivables and supplies used (from Inventory).
 
 **Status: Phase 5 in progress (hardening: restorable backups, security headers, CI).** Phases 0 to 4 are merged. Phase 0: sign-in, database setup, per-year tax rules, JSON/CSV export, backup plan. Phase 1 so far: manual income entry, inventory ledger, dashboard (week/month/year). Square CSV import with preview, built on provisional headers (docs/SQUARE_IMPORT.md); the real export's headers are still to be confirmed.
 

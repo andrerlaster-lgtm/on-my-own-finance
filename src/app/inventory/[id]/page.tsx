@@ -96,7 +96,7 @@ export default async function Item({ params, searchParams }: { params: Promise<{
       {!r.ok && <div className="card err">History problem: {r.error}</div>}
       <div className="card">
         <div className="grid2">
-          <div className="stat">On hand<b>{stock.onHand} {item.unit}{isLowStock(stock.onHand, item.reorder_level) ? " (low)" : ""}</b></div>
+          <div className="stat">On hand<b>{stock.onHand} {item.unit}{isLowStock(stock.onHand, item.reorder_level) ? " (reorder needed)" : ""}</b></div>
           <div className="stat">Average cost<b>{formatCents(stock.avgCostCents)}</b></div>
           <div className="stat">Value<b>{formatCents(stock.valueCents)}</b></div>
         </div>
