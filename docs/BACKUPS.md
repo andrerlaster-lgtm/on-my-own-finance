@@ -13,7 +13,7 @@ export DATABASE_URL="<your Neon connection string>"   # never put this in a file
 npm run backup -- ~/finance-backups/2026-12-31        # a NEW folder; it refuses to overwrite
 npm run verify-backup -- ~/finance-backups/2026-12-31 # checks every file and total, no database needed
 ```
-- The folder holds every table (one JSON row per line), every receipt photo byte for byte, and a manifest with a checksum for each file plus row counts and money totals.
+- The folder holds every table (including `appointments` and `appointment_services` from the Secretary, which contain no personal details) (one JSON row per line), every receipt photo byte for byte, and a manifest with a checksum for each file plus row counts and money totals.
 - It contains financial data and receipt photos. Keep it on an encrypted disk, never in the repository (`backups/` is ignored by git).
 - Run it monthly, before year-end, and before any database change. Keep the year-end backup for as long as your preparer tells you to keep records.
 - To prove a backup works, restore it into a **new empty** database (a new Neon branch or project, never the live one) and compare:

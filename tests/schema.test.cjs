@@ -4,7 +4,7 @@ const S = require("../.testbuild/schema.js");
 test("every statement is additive and re-runnable", () => {
   for (const s of S.schemaStatements) {
     // The only ALTER allowed is adding a column that may already exist (nothing is changed, dropped or rewritten).
-    assert.match(s, /^\s*(CREATE (UNIQUE )?(TABLE|INDEX) IF NOT EXISTS|INSERT INTO app_meta|ALTER TABLE \w+ ADD COLUMN IF NOT EXISTS )/);
+    assert.match(s, /^\s*(CREATE (UNIQUE )?(TABLE|INDEX) IF NOT EXISTS|INSERT INTO (app_meta|appointment_services)|ALTER TABLE \w+ ADD COLUMN IF NOT EXISTS )/);
     assert.doesNotMatch(s.replace(/^\s*ALTER TABLE \w+ ADD COLUMN IF NOT EXISTS/i, ""), /\b(DROP|TRUNCATE|DELETE|ALTER)\b/i);
   }
   assert.match(S.schemaStatements.at(-1), /ON CONFLICT/);
@@ -33,7 +33,7 @@ test("version 6 only adds the optional July 1 mileage rate columns", () => {
 });
 
 test("version 8: temporary trip stops expire, are capped, and are never exported or backed up", () => {
-  assert.equal(S.SCHEMA_VERSION, 8);
+  assert.ok(S.SCHEMA_VERSION >= 8);
   const sql = S.schemaStatements.find((x) => /CREATE TABLE IF NOT EXISTS mileage_pending/.test(x));
   assert.ok(sql); assert.match(sql, /expires_at\s+timestamptz NOT NULL/); assert.match(sql, /char_length\(start_text\) BETWEEN 1 AND 120/);
   assert.ok(!S.EXPORT_TABLES.includes("mileage_pending"), "stops must never reach an export or backup file");

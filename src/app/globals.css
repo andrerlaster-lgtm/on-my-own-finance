@@ -152,3 +152,15 @@ table.stmt a { color: inherit; text-decoration: underline; text-decoration-color
   body { background: #fff; } .topbar, .tabbar, .btn, .linkbtn, form, .acct-tabs, .noprint { display: none !important; }
   main { max-width: none; padding: 0; } .card { box-shadow: none; break-inside: avoid; }
 }
+
+/* Secretary (appointments): a status chip, and a week that is one column on a phone and seven on a wide screen */
+.pill { align-self: start; justify-self: end; font: 600 .78rem var(--sans); padding: 3px 10px; border-radius: 999px; background: var(--chip); color: var(--ink); border: 1px solid var(--line); white-space: nowrap; }
+.pill-confirmed { background: var(--soft); color: var(--accent-dark); border-color: var(--accent); }
+.pill-completed { color: var(--muted); }
+.pill-canceled { color: var(--bad); background: var(--bad-bg); border-color: var(--bad-line); }
+.appt-canceled .what a { text-decoration: line-through; opacity: .7; }
+.week { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin-bottom: 16px; }
+.week .card { margin: 0; padding: 12px 14px; }
+.week h2 { font-size: 1rem; margin: 0 0 6px; }
+.week .entry { padding: 8px 0; }
+@media (min-width: 900px) { .week { grid-template-columns: repeat(7, minmax(0, 1fr)); } }
