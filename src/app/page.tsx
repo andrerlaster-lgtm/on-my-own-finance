@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { requireOwner } from "@/lib/auth";
-import { databaseConfigured, databaseReady, schemaVersion, runSetup, listIncomeAll, lastImportRefunds, listItems, listExpensesAll, listTripsAll, getRules, listMovements, listLotUses, warnDaysByItem, listPayments, purgePendingTrips } from "@/lib/db";
+import { databaseConfigured, databaseReady, schemaVersion, runSetup, listIncomeAll, lastImportRefunds, listItems, listExpensesAll, listTripsAll, getRules, listMovements, listLotUses, warnDaysByItem, listPayments, purgePendingTrips, listVehicleMethods } from "@/lib/db";
 import { setAside } from "@/lib/taxforms";
 import { expiryAlerts, type LotUse } from "@/lib/lots";
 import type { Movement } from "@/lib/inventory";
-import { estimateProfit, summarizeExpenses } from "@/lib/expenses";
+import { estimateProfit, summarizeExpenses, type Expense } from "@/lib/expenses";
+import { isVehicleCost, taxExpenses } from "@/lib/vehicles";
 import { formatMiles, mileageSummary, type RateInfo } from "@/lib/mileage";
 import { summarize, TAX_FORMS } from "@/lib/income";
 import { isLowStock } from "@/lib/inventory";
@@ -51,6 +52,10 @@ export default async function Home() {
   const allItems = dash ? await listItems(movements as Movement[]) : [];
   const low = allItems.filter((i) => isLowStock(i.stock.onHand, i.reorder_level));
   const expiring = v >= 4 ? expiryAlerts(allItems, movements as Movement[], lotUses as LotUse[], warn as Map<number, number>, today) : [];
+  // Tax estimates leave actual vehicle costs out unless the year uses "actual expenses" (the books and reports always include them).
+  const vehicleMethods = dash && full && v >= 10 ? await listVehicleMethods() : {};
+  const methodFor = (y: number) => (vehicleMethods as Record<number, "standard_mileage" | "actual">)[y] ?? "standard_mileage";
+  const taxExps = taxExpenses(exps as Expense[], methodFor);
   const rates: Record<number, RateInfo> = {};
   years.forEach((y, i) => { const r = rateRules[i]; if (r) rates[y] = { centsPerMile: r.mileage_rate_cents, confirmed: r.mileage_rate_confirmed, h2CentsPerMile: r.mileage_rate_h2_cents, h2Confirmed: r.mileage_rate_h2_confirmed }; });
   const cols = [["This week", periods.week], ["This month", periods.month], ["This year", periods.year]] as const;
@@ -91,7 +96,7 @@ export default async function Home() {
           {low.length > 0 && <div className="card"><h2>Low stock <span className="muted">{low.length} item{low.length === 1 ? "" : "s"}</span></h2><ul className="plain">{low.slice(0, 6).map((i) => <li key={i.id}><Link href={`/inventory/${i.id}`}>{i.label}</Link>: {i.stock.onHand} {i.unit} left</li>)}</ul>{low.length > 6 && <p className="muted"><Link href="/inventory">See all {low.length} in Supplies</Link></p>}</div>}
           {expiring.length > 0 && <div className="card"><h2>Expiring supplies <span className="muted">{expiring.length} lot{expiring.length === 1 ? "" : "s"}</span></h2><ul className="plain">{expiring.slice(0, 6).map((a) => <li key={`${a.item_id}${a.lot_number}`}><Link href={`/inventory/${a.item_id}`}>{a.label}</Link> lot {a.lot_number}: {a.onHand} {a.unit}, {a.status === "expired" ? "expired" : `expires in ${a.daysLeft} day${a.daysLeft === 1 ? "" : "s"}`}</li>)}</ul>{expiring.length > 6 && <p className="muted"><Link href="/inventory">See all {expiring.length} in Supplies</Link></p>}</div>}
           {yearRules && (version ?? 0) >= 5 && (() => {
-            const t = summarize(entries, periods.year), profit = estimateProfit(t.netAfterFees, summarizeExpenses(exps, periods.year)), a = setAside(profit, yearRules, yearPaid);
+            const t = summarize(entries, periods.year), profit = estimateProfit(t.netAfterFees, summarizeExpenses(taxExps, periods.year)), a = setAside(profit, yearRules, yearPaid);
             return (
               <div className="card">
                 <h2>Tax set-aside, this year (estimate) <Link href="/taxes" className="muted">details</Link></h2>
@@ -118,7 +123,7 @@ export default async function Home() {
                   <div className="stat">Net after processing fees, before expenses<b>{formatCents(t.netAfterFees)}</b></div>
                 </div>
                 {full && (() => {
-                  const ex = summarizeExpenses(exps, range), profit = estimateProfit(t.netAfterFees, ex), mi = mileageSummary(trips, range, rates);
+                  const ex = summarizeExpenses(taxExps, range), veh = summarizeExpenses((exps as Expense[]).filter((e) => isVehicleCost(e) && methodFor(Number(e.spent_on.slice(0, 4))) !== "actual"), range), profit = estimateProfit(t.netAfterFees, ex), mi = mileageSummary(trips, range, rates);
                   return (
                     <>
                       <div className="grid2" style={{ marginTop: 8 }}>
@@ -127,6 +132,7 @@ export default async function Home() {
                         <div className="stat">Miles ({mi.trips} trip{mi.trips === 1 ? "" : "s"})<b>{formatMiles(mi.miles_tenths)}</b></div>
                         <div className="stat">Mileage deduction estimate<b>{mi.ratesMissing ? "rate not set" : formatCents(mi.deductionCents)}</b></div>
                       </div>
+                      {veh.total > 0 && <p className="muted">Vehicle spending of {formatCents(veh.total)} is in the books (see <Link href="/vehicles">Vehicles</Link>) but not counted in the expenses and profit above, because the standard mileage rate is used.</p>}
                       {(profit === null || mi.unconfirmed) && <p className="muted">{profit === null ? "Profit is only estimated once this period has at least one expense entry. " : ""}{mi.unconfirmed ? "The mileage rate is not confirmed with your preparer." : ""}</p>}
                     </>
                   );

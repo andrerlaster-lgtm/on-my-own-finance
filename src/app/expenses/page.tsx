@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { requireOwner } from "@/lib/auth";
 import { databaseReady, listExpensesAll, addExpense, deleteExpense, addReceipt, countReceipts, expenseExists, receiptIdsFor, deleteReceipt, inventoryPurchasesTotal } from "@/lib/db";
 import { CATEGORIES, CATEGORY_LABELS, parseExpenseForm, summarizeExpenses } from "@/lib/expenses";
+import { VEHICLE_EXPENSE_CATEGORY } from "@/lib/vehicles";
 import { MAX_RECEIPTS_PER_EXPENSE, MAX_RECEIPT_BYTES, inspectJpeg } from "@/lib/receipts";
 import { formatCents } from "@/lib/money";
 import { periodRanges, todayInChicago } from "@/lib/dates";
@@ -30,6 +31,7 @@ async function add(fd: FormData) {
   for (const [k, v] of fd.entries()) if (typeof v === "string") raw[k] = v;
   const parsed = parseExpenseForm(raw);
   if (!parsed.ok) return fail(parsed.errors.join(" | "));
+  if (parsed.value.category === VEHICLE_EXPENSE_CATEGORY) return fail("Vehicle costs are entered on the Vehicles page, so they are tied to a vehicle.");
   const photo = await readPhoto(fd);
   if (photo && "error" in photo) return fail(photo.error);
   await addExpense(parsed.value, photo?.bytes);
@@ -93,8 +95,8 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
         <label htmlFor="d">Date</label><input id="d" name="spent_on" type="date" defaultValue={today} required />
         <label htmlFor="a">Amount ($)</label><input id="a" name="amount" type="text" inputMode="decimal" placeholder="0.00" required />
         <label htmlFor="c">Category</label>
-        <select id="c" name="category" defaultValue="supplies">{CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}</select>
-        <p className="muted">Gas: pick &ldquo;Vehicle and fuel (gas)&rdquo;. If your preparer uses the standard mileage rate, don&rsquo;t also deduct gas; the mileage rate already covers it.</p>
+        <select id="c" name="category" defaultValue="supplies">{CATEGORIES.filter((c) => c.id !== VEHICLE_EXPENSE_CATEGORY).map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}</select>
+        <p className="muted">Gas, repairs, tires and other vehicle costs go on <Link href="/vehicles/expenses">Vehicles</Link>, where each one is tied to a vehicle.</p>
         <label htmlFor="v">Vendor (business name only, optional)</label><input id="v" name="vendor" type="text" maxLength={60} />
         <label className="check"><input type="checkbox" name="receipt_on_file" /> I kept the paper or digital receipt</label>
         <label>Receipt photo</label><ReceiptPicker />

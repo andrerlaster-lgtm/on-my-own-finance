@@ -1,5 +1,6 @@
 import { toCsv } from "./csv";
 import { CATEGORY_LABELS, estimateProfit, summarizeExpenses, type Expense } from "./expenses";
+import { isVehicleCost, taxExpenses, type TaxMethod } from "./vehicles";
 import { SOURCE_LABELS, TAX_FORMS, summarize, type IncomeEntry } from "./income";
 import { mileageSummary, PURPOSE_LABELS, type Trip } from "./mileage";
 import { needsConfirmation, type TaxYearRules } from "./taxRules";
@@ -13,6 +14,8 @@ import type { Report } from "./lots";
 export interface PacketInput {
   year: number; income: IncomeEntry[]; expenses: Expense[]; trips: Trip[]; rules: TaxYearRules; forms: FormEntry[]; payers: Payer[]; payments: Payment[];
   inventory: Report; expiredLots: number; lastImportRefunds: number;
+  /** How the year's vehicle costs are treated in these estimates. Default: standard mileage (vehicle costs are left out). */
+  vehicleMethod?: TaxMethod;
 }
 export interface Group { key: string; label: string; count: number; revenue: number; tips: number; receipts: number; fees: number; visits: number }
 export interface Readiness { level: "attention" | "note"; text: string }
@@ -22,6 +25,8 @@ export interface Packet {
   expenses: { total: number; count: number; byCategory: { key: string; label: string; total: number; count: number; withReceipt: number; without: number }[] };
   mileage: { miles_tenths: number; trips: number; centsPerMile: number | null; confirmed: boolean; centsPerMileH2?: number | null; confirmedH2?: boolean; deductionCents: number | null };
   inventory: { beginValue: number; purchasesValue: number; usedValue: number; writeOffValue: number; adjustmentsNet: number; endValue: number; problems: string[] };
+  /** Actual vehicle spending is shown beside, not inside, the expense figures unless the year uses actual expenses. */
+  vehicle: { method: TaxMethod; spendingCents: number; count: number; countedCents: number; notClaimedCents: number };
   profit: { netAfterFees: number; expensesTotal: number; expenseCount: number; estimatedProfit: number | null };
   forms: { rows: ReconRow[]; unformed: Unformed[]; thresholdK: ReturnType<typeof thresholdProgress> & { receipts: number }; thresholdNec: ReturnType<typeof thresholdProgress> & { receipts: number } };
   setAside: SetAside;
@@ -61,7 +66,10 @@ function groupBy(entries: readonly IncomeEntry[], keyOf: (e: IncomeEntry) => [st
 
 export function buildPacket(i: PacketInput): Packet {
   const y = `${i.year}-`, range = { from: `${i.year}-01-01`, to: `${i.year}-12-31` };
-  const income = i.income.filter((e) => e.occurred_on.startsWith(y)), expenses = i.expenses.filter((e) => e.spent_on.startsWith(y));
+  const method: TaxMethod = i.vehicleMethod ?? "standard_mileage";
+  const income = i.income.filter((e) => e.occurred_on.startsWith(y)), yearExpenses = i.expenses.filter((e) => e.spent_on.startsWith(y));
+  const vehicleSpend = yearExpenses.filter(isVehicleCost).reduce((t, e) => t + e.amount_cents, 0), vehicleCount = yearExpenses.filter(isVehicleCost).length;
+  const expenses = taxExpenses(yearExpenses, () => method); // vehicle costs are out unless the year uses actual expenses
   const trips = i.trips.filter((t) => t.driven_on.startsWith(y)), payments = i.payments.filter((p) => p.tax_year === i.year);
   const payerLabel = (id: number | null) => (id === null ? "No payer chosen" : i.payers.find((p) => p.id === id)?.label ?? `Payer ${id}`);
   const formLabel = (id: string) => TAX_FORMS.find((t) => t.id === id)?.label.split(" (")[0] ?? id;
@@ -118,10 +126,12 @@ export function buildPacket(i: PacketInput): Packet {
   if (income.length === 0) note("No income is recorded for this year.");
   if (ex.count === 0) note("No expenses are entered, so profit is not estimated.");
   if (aside.status === "ok" && aside.remainingCents !== null && aside.remainingCents > 0) note("Set aside so far is less than the estimate; compare with the payments made.");
+  if (vehicleCount > 0) note(method === "actual" ? "Vehicle costs are counted as actual expenses for this year. Do not also claim the mileage deduction; business-use percentage is not tracked here, so your preparer decides." : `Actual vehicle spending (${(vehicleSpend / 100).toFixed(2)}) is in the books but NOT counted in these expense or profit figures, because the standard mileage rate is used. Your preparer decides.`);
   note("How tips, expired write-offs and year-end inventory are treated is for your tax preparer.");
 
   return {
     year: i.year, receipts: { total, bySource, byForm, byPayer },
+    vehicle: { method, spendingCents: vehicleSpend, count: vehicleCount, countedCents: method === "actual" ? vehicleSpend : 0, notClaimedCents: method === "actual" ? 0 : vehicleSpend },
     expenses: { total: ex.total, count: ex.count, byCategory: [...catMap.values()].sort((a, b) => b.total - a.total) },
     mileage, inventory, profit, forms, setAside: aside, payments,
     rules: { ...i.rules, pending }, readiness, caveats: CAVEATS,
@@ -142,6 +152,7 @@ export function packetCsv(p: Packet, section: PacketSection): string {
       const r: [string, Cell][] = [
         ["tax_year", p.year], ["revenue_cents (excludes tips and refunds)", p.receipts.total.revenue], ["tips_cents", p.receipts.total.tips], ["total_receipts_cents", p.receipts.total.receipts],
         ["processing_fees_cents", p.receipts.total.fees], ["net_after_processing_fees_cents", p.profit.netAfterFees], ["expenses_cents", p.profit.expensesTotal],
+        ["vehicle_method", p.vehicle?.method === "actual" ? "actual expenses" : "standard mileage"], ["actual_vehicle_spending_cents (in the books)", p.vehicle?.spendingCents ?? 0], ["vehicle_spending_counted_in_expenses_cents", p.vehicle?.countedCents ?? 0],
         ["estimated_profit_cents (before taxes and mileage deduction)", p.profit.estimatedProfit], ["miles", (p.mileage.miles_tenths / 10).toFixed(1)], ["mileage_rate_cents_per_mile", p.mileage.centsPerMile],
         ["mileage_rate_confirmed", p.mileage.confirmed ? "yes" : "no"], ["mileage_rate_from_july_1_cents_per_mile", p.mileage.centsPerMileH2 ?? null], ["mileage_rate_from_july_1_confirmed", p.mileage.confirmedH2 ? "yes" : "no"], ["mileage_deduction_estimate_cents", p.mileage.deductionCents],
         ["inventory_value_start_cents", p.inventory.beginValue], ["inventory_purchases_cents", p.inventory.purchasesValue], ["inventory_used_cents", p.inventory.usedValue],

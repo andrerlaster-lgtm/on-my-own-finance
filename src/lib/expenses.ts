@@ -16,7 +16,7 @@ export const CATEGORIES = [
   { id: "professional_services", label: "Professional services" },
   { id: "phone_internet", label: "Phone and internet" },
   { id: "training", label: "Training and education" },
-  { id: "vehicle_fuel", label: "Vehicle and fuel (gas)" },
+  { id: "vehicle_fuel", label: "Vehicle expenses" },
   { id: "other", label: "Other" },
 ] as const;
 export type Category = (typeof CATEGORIES)[number]["id"];
