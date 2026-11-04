@@ -19,13 +19,15 @@ test("the proxy only sets the policy: it skips APIs and static files and makes n
 });
 
 test("server settings checks never print values and catch the dangerous cases", () => {
-  const good = { DATABASE_URL: "postgres://u:SECRETPW@h/db", GITHUB_ID: "i", GITHUB_SECRET: "s", NEXTAUTH_SECRET: "x".repeat(32), OWNER_GITHUB_ID: "12345", NEXTAUTH_URL: "https://app.example" };
+  const good = { DATABASE_URL: "postgres://u:SECRETPW@h/db", GITHUB_ID: "i", GITHUB_SECRET: "s", NEXTAUTH_SECRET: "x".repeat(32), OWNER_GITHUB_ID: "12345", GOOGLE_CLIENT_ID: "g", GOOGLE_CLIENT_SECRET: "gs", BUSINESS_OWNER_GOOGLE_EMAIL: "owner@example.com", NEXTAUTH_URL: "https://app.example" };
   assert.deepEqual(E.envProblems(good, true), []);
   assert.match(E.envProblems({ ...good, ADMIN_DEV_BYPASS: "1" }, true).join(), /ADMIN_DEV_BYPASS is set in production/);
   assert.deepEqual(E.envProblems({ ...good, ADMIN_DEV_BYPASS: "1" }, false), [], "allowed for local testing");
   assert.match(E.envProblems({ ...good, NEXTAUTH_SECRET: "short" }, true).join(), /shorter than 32/);
   assert.match(E.envProblems({ ...good, OWNER_GITHUB_ID: "andre" }, true).join(), /numeric GitHub ID/);
   assert.match(E.envProblems({ ...good, NEXTAUTH_URL: "http://app.example" }, true).join(), /https/);
+  assert.match(E.envProblems({ ...good, BUSINESS_OWNER_GOOGLE_EMAIL: "" }, true).join(), /BUSINESS_OWNER_GOOGLE_EMAIL/);
+  assert.match(E.envProblems({ ...good, GOOGLE_CLIENT_SECRET: "" }, true).join(), /GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET/);
   assert.equal(E.envProblems({}, true).length >= 5, true);
   assert.doesNotMatch(E.envProblems({ ...good, NEXTAUTH_SECRET: "SECRETVALUE" }, true).join(), /SECRETVALUE|SECRETPW/, "no values in messages");
 });

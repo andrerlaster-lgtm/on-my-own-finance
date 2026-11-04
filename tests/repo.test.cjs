@@ -9,13 +9,13 @@ test("every page and route is gated (except sign-in and the NextAuth endpoints)"
     const rel = path.relative(root, f);
     if (rel.includes("[...nextauth]")) continue;
     const src = require("node:fs").readFileSync(f, "utf8");
-    assert.match(src, /requireOwner\(|ownerOrNull\(/, `${rel} has no access check`);
+    assert.match(src, /requireOwner\(|requireAdmin\(|ownerOrNull\(/, `${rel} has no access check`);
   }
 });
 test("every server action checks the owner first", () => {
   for (const f of walk(path.join(root, "src/app")).filter((f) => /\.tsx?$/.test(f))) {
     const src = require("node:fs").readFileSync(f, "utf8");
-    for (const m of src.matchAll(/"use server";\s*\n\s*(await requireOwner\(\)|.*)/g)) assert.match(m[1], /requireOwner/, `${f}: action without owner check`);
+    for (const m of src.matchAll(/"use server";\s*\n\s*(await require(?:Owner|Admin)\(\)|.*)/g)) assert.match(m[1], /require(Owner|Admin)/, `${f}: action without owner check`);
   }
 });
 test("security headers and no-store", () => {

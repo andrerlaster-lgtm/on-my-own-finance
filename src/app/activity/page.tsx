@@ -1,13 +1,13 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { requireOwner } from "@/lib/auth";
+import { requireAdmin } from "@/lib/auth";
 import { databaseReady, listActivity } from "@/lib/db";
 import { describeActivity } from "@/lib/activity";
 
 export const dynamic = "force-dynamic";
 
 export default async function Activity({ searchParams }: { searchParams: Promise<{ before?: string }> }) {
-  await requireOwner();
+  await requireAdmin();
   if (!(await databaseReady())) redirect("/");
   const sp = await searchParams;
   const before = /^\d{1,12}$/.test(sp.before ?? "") ? Number(sp.before) : null;
