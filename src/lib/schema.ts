@@ -1,9 +1,9 @@
 /*
- * Database schema (version 12). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS, ADD COLUMN IF NOT EXISTS and
+ * Database schema (version 13). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS, ADD COLUMN IF NOT EXISTS and
  * ON CONFLICT only. Nothing here drops or rewrites data. Privacy rule: no column may hold a client or patient's name,
  * contact details, birth date or health information (tests/schema.test.cjs checks the column names).
  */
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 export const schemaStatements: string[] = [
   `CREATE TABLE IF NOT EXISTS app_meta (
@@ -395,6 +395,12 @@ $fn$`,
   // ---- version 12: spreadsheet expense imports. One optional column: the row's import key (date | cents | occurrence), so importing the same file twice adds nothing. Hand-entered expenses keep NULL. ----
   `ALTER TABLE expenses ADD COLUMN IF NOT EXISTS import_key text CHECK (import_key IS NULL OR char_length(import_key) BETWEEN 1 AND 40)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS expenses_import_key_uq ON expenses (import_key) WHERE import_key IS NOT NULL`,
+  // ---- version 13: the master import. One optional import key column (with a unique index) on income, inventory movements and mileage trips,
+  // so importing the same file twice adds nothing. Hand-entered rows keep NULL. Imported cash/check income keeps external_id NULL, so it can still be deleted.
+  ...(["income_entries", "inventory_movements", "mileage_trips"] as const).flatMap((t) => [
+    `ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS import_key text CHECK (import_key IS NULL OR char_length(import_key) BETWEEN 1 AND 60)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS ${t}_import_key_uq ON ${t} (import_key) WHERE import_key IS NOT NULL`,
+  ]),
   `INSERT INTO app_meta (key, value) VALUES ('schema_version', '${SCHEMA_VERSION}')
    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now() WHERE app_meta.value::int < EXCLUDED.value::int`,
 ];

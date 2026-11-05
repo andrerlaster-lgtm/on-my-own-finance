@@ -6,7 +6,7 @@
 Income → **Import a file** → choose the Transactions export (**CSV or Excel .xlsx**) → **Preview** (nothing is saved) → **Import**.
 
 **Which Square file:** Square Dashboard > Transactions > Export > **Transactions CSV**. Two other Square exports are recognized and refused with a message, because they can't be imported as payments:
-- **Item details** (one line per item): it has no tips or processing fees, and importing it would block the right file's Payment IDs as duplicates.
+- **Item details** (one line per item) is not imported as income (it has no tips or fees). It is used only to sort already-imported Square payments into revenue accounts for Revenue by Service (see ACCOUNTING.md, Master import).
 - **Sales summary** (totals for a period): no individual payments. Keep it to compare its totals with the import preview.
 
 ## Rules
