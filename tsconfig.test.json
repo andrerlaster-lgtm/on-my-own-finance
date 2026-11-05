@@ -38,7 +38,9 @@
     "src/lib/xlsx.ts",
     "src/lib/pdfdoc.ts",
     "src/lib/schedule.ts",
-    "src/lib/finance.ts"
+    "src/lib/finance.ts",
+    "src/lib/xlsxRead.ts",
+    "src/lib/expenseImport.ts"
   ],
   "exclude": [
     "node_modules"

@@ -3,7 +3,11 @@
 **Status: built on provisional headers.** Replace them with the real export's headers when available (see "Updating the format").
 
 ## Use
-Income → Import Square CSV → choose the Transactions export → **Preview** (nothing is saved) → **Import**.
+Income → **Import a file** → choose the Transactions export (**CSV or Excel .xlsx**) → **Preview** (nothing is saved) → **Import**.
+
+**Which Square file:** Square Dashboard > Transactions > Export > **Transactions CSV**. Two other Square exports are recognized and refused with a message, because they can't be imported as payments:
+- **Item details** (one line per item): it has no tips or processing fees, and importing it would block the right file's Payment IDs as duplicates.
+- **Sales summary** (totals for a period): no individual payments. Keep it to compare its totals with the import preview.
 
 ## Rules
 - Columns are matched by header name, not position. Only the fields in `src/lib/squareFormat.ts` are read; every other column is skipped, and the file itself is never stored.
