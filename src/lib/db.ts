@@ -320,6 +320,34 @@ export async function addExpense(v: ExpenseInput, photo?: Uint8Array): Promise<n
   return id;
 }
 
+/** Import keys from this list that are already saved (an earlier import of the same rows). */
+export async function existingExpenseImportKeys(keys: string[]): Promise<Set<string>> {
+  if (keys.length === 0) return new Set();
+  const rows = await sql()`SELECT import_key FROM expenses WHERE import_key = ANY(${keys}::text[])`;
+  return new Set(rows.map((r) => String(r.import_key)));
+}
+
+/** Hand-entered expenses (no import key) between two dates, counted by "date|cents", to spot rows you already typed in. */
+export async function handEnteredExpensePairs(from: string, to: string): Promise<Map<string, number>> {
+  const rows = await sql()`SELECT to_char(spent_on, 'YYYY-MM-DD') AS d, amount_cents AS c, count(*) AS n FROM expenses WHERE import_key IS NULL AND spent_on BETWEEN ${from}::date AND ${to}::date GROUP BY 1, 2`;
+  return new Map(rows.map((r) => [`${r.d}|${Number(r.c)}`, Number(r.n)]));
+}
+
+/** Saves imported expenses in one statement. A row whose import key is already saved is skipped by the database. */
+export async function importExpenseRows(rows: { spent_on: string; amount_cents: number; category: string; vendor: string | null; key: string }[]): Promise<number> {
+  if (rows.length === 0) return 0;
+  const res = await sql().query(
+    `WITH ins AS (
+       INSERT INTO expenses (spent_on, amount_cents, category, vendor, receipt_on_file, import_key)
+       SELECT u.d, u.c, u.k, u.v, false, u.x FROM unnest($1::date[], $2::bigint[], $3::text[], $4::text[], $5::text[]) AS u(d, c, k, v, x)
+       ON CONFLICT (import_key) WHERE import_key IS NOT NULL DO NOTHING RETURNING id, amount_cents)
+     SELECT count(*) AS added, coalesce(sum(amount_cents), 0) AS cents FROM ins`,
+    [rows.map((r) => r.spent_on), rows.map((r) => r.amount_cents), rows.map((r) => r.category), rows.map((r) => r.vendor), rows.map((r) => r.key)]);
+  const r0 = (res as { added: string; cents: string }[])[0];
+  await audit("import_expenses", { added: Number(r0.added), amount_cents: Number(r0.cents), skipped_existing: rows.length - Number(r0.added) });
+  return Number(r0.added);
+}
+
 /** Deletes the expense and its photos together, in one statement. */
 export async function deleteExpense(id: number): Promise<boolean> {
   const rows = await sql()`WITH p AS (DELETE FROM expense_receipts WHERE expense_id = ${id}) DELETE FROM expenses WHERE id = ${id} RETURNING id, amount_cents, category`;

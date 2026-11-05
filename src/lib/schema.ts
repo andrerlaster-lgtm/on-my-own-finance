@@ -1,9 +1,9 @@
 /*
- * Database schema (version 11). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS, ADD COLUMN IF NOT EXISTS and
+ * Database schema (version 12). Every statement is additive and safe to run more than once: CREATE ... IF NOT EXISTS, ADD COLUMN IF NOT EXISTS and
  * ON CONFLICT only. Nothing here drops or rewrites data. Privacy rule: no column may hold a client or patient's name,
  * contact details, birth date or health information (tests/schema.test.cjs checks the column names).
  */
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 12;
 
 export const schemaStatements: string[] = [
   `CREATE TABLE IF NOT EXISTS app_meta (
@@ -392,6 +392,9 @@ BEGIN
   RETURN jsonb_build_object('appointment_id', v_id, 'payment_id', v_pay, 'movements', v_moves);
 END
 $fn$`,
+  // ---- version 12: spreadsheet expense imports. One optional column: the row's import key (date | cents | occurrence), so importing the same file twice adds nothing. Hand-entered expenses keep NULL. ----
+  `ALTER TABLE expenses ADD COLUMN IF NOT EXISTS import_key text CHECK (import_key IS NULL OR char_length(import_key) BETWEEN 1 AND 40)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS expenses_import_key_uq ON expenses (import_key) WHERE import_key IS NOT NULL`,
   `INSERT INTO app_meta (key, value) VALUES ('schema_version', '${SCHEMA_VERSION}')
    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now() WHERE app_meta.value::int < EXCLUDED.value::int`,
 ];

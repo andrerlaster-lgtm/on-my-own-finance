@@ -49,7 +49,7 @@ export default async function Income({ searchParams }: { searchParams: Promise<{
   return (
     <main>
       <h1>Income</h1>
-      <p><Link className="btn secondary" href="/income/import">Import Square CSV</Link></p>
+      <p><Link className="btn secondary" href="/income/import">Import a file (CSV or Excel)</Link></p>
       <div className="note">Revenue here excludes tips and excludes refunds. Tips are kept in their own column so nothing is counted twice. Which 1099 form applies is a separate choice from where the money came from; ask your tax preparer.</div>
       {sp.saved && <div className="note">Saved.</div>}
       {sp.error && <div className="card err">{sp.error.split(" | ").map((e) => <div key={e}>{e}</div>)}</div>}

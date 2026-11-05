@@ -17,7 +17,7 @@ export type ParseOutcome =
 
 const norm = (s: string) => s.replace(/^﻿/, "").trim().replace(/\s+/g, " ").toLowerCase();
 
-function* csvRecords(text: string): Generator<string[]> {
+export function* csvRecords(text: string): Generator<string[]> {
   let i = text.charCodeAt(0) === 0xfeff ? 1 : 0;
   const n = text.length;
   let field = "", rec: string[] = [], inQ = false, any = false;
@@ -65,15 +65,31 @@ const safeStatus = (s: string) => (/^[A-Za-z][A-Za-z _-]{0,29}$/.test(s) ? s : "
 
 export function parseSquareCsv(text: string): ParseOutcome {
   if (text.length > LIMITS.fileBytes) return { ok: false, error: "That file is too large (2 MB limit). Export a shorter date range." };
-  const it = (() => { try { return csvRecords(text); } catch { return null; } })();
+  let records: string[][];
+  try { records = [...csvRecords(text)]; } catch { return { ok: false, error: "The file has an unclosed quotation mark, so it can't be read." }; }
+  return parseSquareRecords(records);
+}
+
+/** Square's other exports are recognized so the message can say which file to export instead. */
+export function otherSquareExport(firstRows: readonly string[][]): string | null {
+  const first = norm(firstRows[0]?.[0] ?? "");
+  if (/^sales summary/.test(first)) return "This is Square's Sales summary report (totals for the whole period), not a list of payments. Export Transactions instead: Square Dashboard > Transactions > Export > Transactions CSV. You can keep this summary to compare its totals with the import preview.";
+  const names = new Set((firstRows[0] ?? []).map(norm));
+  if (names.has("item") && names.has("qty") && !names.has("total collected")) return "This is Square's Item details export (one line per item, with no tips or processing fees). Importing it would leave out fees and tips. Export Transactions instead: Square Dashboard > Transactions > Export > Transactions CSV.";
+  return null;
+}
+
+/** Rows from a CSV file or an Excel sheet (already split into cells). The first non-empty row must be the header. */
+export function parseSquareRecords(records: Iterable<string[]>): ParseOutcome {
+  const it = records;
   let header: string[] | undefined;
   const rows: ImportRow[] = [], flags: Flag[] = [], seen = new Set<string>(), unknown = new Set<string>();
   const counts: Counts = { read: 0, importable: 0, duplicateInFile: 0, refund: 0, failed: 0, uncertain: 0 };
   let first: string | null = null, last: string | null = null;
   let idx: Partial<Record<SquareField, number>> = {};
-  try {
+  {
     let n = 0;
-    for (const rec of it ?? []) {
+    for (const rec of it) {
       n++;
       if (!header) {
         header = rec;
@@ -86,6 +102,7 @@ export function parseSquareCsv(text: string): ParseOutcome {
         }
         for (const f of REQUIRED_FIELDS) if (idx[f] === undefined) missing.push(SQUARE_COLUMNS[f][0]);
         if (idx.paymentId === undefined && idx.transactionId === undefined) missing.push(`${SQUARE_COLUMNS.paymentId[0]} or ${SQUARE_COLUMNS.transactionId[0]}`);
+        if (missing.length) { const other = otherSquareExport([header]); if (other) return { ok: false, error: other }; }
         if (missing.length) return { ok: false, error: `This doesn't look like the expected Square Transactions export. Missing column(s): ${missing.join(", ")}. If Square's headers changed, update src/lib/squareFormat.ts.` };
         continue;
       }
@@ -129,8 +146,6 @@ export function parseSquareCsv(text: string): ParseOutcome {
       if (first === null || date < first) first = date;
       if (last === null || date > last) last = date;
     }
-  } catch {
-    return { ok: false, error: "The file has an unclosed quotation mark, so it can't be read." };
   }
   if (!header) return { ok: false, error: "The file is empty." };
   counts.importable = rows.length;
