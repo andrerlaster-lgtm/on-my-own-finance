@@ -40,3 +40,7 @@ Nothing here has been done yet. Do it in this order, and stop at any step that d
 ## File imports (schema version 12)
 - Press **Set up database** once after merging. It only adds one optional column to expenses (`import_key`) and a unique index on it. Nothing existing is changed.
 - Import your expense spreadsheet once, check the preview (sheets, categories, skipped rows), and compare the Expenses page totals with your spreadsheet.
+
+## Master import (schema version 13)
+- Press **Set up database** once after merging. It only adds an optional `import_key` column and a unique index to income entries, inventory movements and mileage trips. Nothing existing is changed.
+- Before importing Square item details, add one revenue account per service under Accounting > Chart of Accounts.

@@ -91,7 +91,7 @@ export default async function Home() {
           <Link href="/income"><b>Add income</b><span>Money in, tips, visits</span></Link>
           <Link href="/expenses"><b>Add expense</b><span>With a receipt photo</span></Link>
           <Link href="/mileage"><b>Log a trip</b><span>Miles for the day</span></Link>
-          <Link href="/income/import"><b>Import a file</b><span>Square or expenses, CSV or Excel</span></Link>
+          <Link href="/income/import"><b>Import files</b><span>Square, expenses, inventory, mileage, income</span></Link>
         </div>
       )}
       {!(ready && (version ?? 0) >= SCHEMA_VERSION) && <div className="card">

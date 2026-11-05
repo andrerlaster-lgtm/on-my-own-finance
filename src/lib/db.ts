@@ -348,6 +348,118 @@ export async function importExpenseRows(rows: { spent_on: string; amount_cents: 
   return Number(r0.added);
 }
 
+/* ---- master import (version 13) ---- */
+const KEYED = { income_entries: "income_entries", inventory_movements: "inventory_movements", mileage_trips: "mileage_trips" } as const;
+/** Import keys from this list already saved in that table. */
+export async function existingImportKeys(table: keyof typeof KEYED, keys: string[]): Promise<Set<string>> {
+  const found = new Set<string>();
+  for (let i = 0; i < keys.length; i += 1000) {
+    const rows = await sql().query(`SELECT import_key FROM ${KEYED[table]} WHERE import_key = ANY($1::text[])`, [keys.slice(i, i + 1000)]);
+    for (const r of rows as { import_key: string }[]) found.add(r.import_key);
+  }
+  return found;
+}
+
+/** Hand-entered manual income (not Square, not imported) by "date|revenue|tip", and hand-entered trips by "date|tenths", to spot rows already typed in. */
+export async function handEnteredIncomePairs(from: string, to: string): Promise<Map<string, number>> {
+  const rows = await sql()`SELECT to_char(occurred_on, 'YYYY-MM-DD') AS d, gross_cents AS g, tip_cents AS t, count(*) AS n FROM income_entries
+                            WHERE source <> 'square' AND external_id IS NULL AND import_key IS NULL AND occurred_on BETWEEN ${from}::date AND ${to}::date GROUP BY 1, 2, 3`;
+  return new Map(rows.map((r) => [`${r.d}|${Number(r.g)}|${Number(r.t)}`, Number(r.n)]));
+}
+export async function handEnteredTripPairs(from: string, to: string): Promise<Map<string, number>> {
+  const rows = await sql()`SELECT to_char(driven_on, 'YYYY-MM-DD') AS d, miles_tenths AS m, count(*) AS n FROM mileage_trips WHERE import_key IS NULL AND driven_on BETWEEN ${from}::date AND ${to}::date GROUP BY 1, 2`;
+  return new Map(rows.map((r) => [`${r.d}|${Number(r.m)}`, Number(r.n)]));
+}
+
+export async function importIncomeRows(rows: { occurred_on: string; source: string; gross_cents: number; tip_cents: number; fee_cents: number; visits: number; key: string }[]): Promise<number> {
+  if (!rows.length) return 0;
+  const res = await sql().query(
+    `WITH ins AS (INSERT INTO income_entries (occurred_on, source, tax_form, gross_cents, tip_cents, fee_cents, visits, import_key)
+       SELECT u.d, u.s, 'unknown', u.g, u.t, u.f, u.v, u.k FROM unnest($1::date[], $2::text[], $3::bigint[], $4::bigint[], $5::bigint[], $6::int[], $7::text[]) AS u(d, s, g, t, f, v, k)
+       ON CONFLICT (import_key) WHERE import_key IS NOT NULL DO NOTHING RETURNING id) SELECT count(*) AS n FROM ins`,
+    [rows.map((r) => r.occurred_on), rows.map((r) => r.source), rows.map((r) => r.gross_cents), rows.map((r) => r.tip_cents), rows.map((r) => r.fee_cents), rows.map((r) => r.visits), rows.map((r) => r.key)]);
+  const n = Number((res as { n: string }[])[0].n);
+  await audit("import_income", { added: n, skipped_existing: rows.length - n });
+  return n;
+}
+
+export async function importTripRows(rows: { driven_on: string; miles_tenths: number; purpose: string; odometer_start: number | null; odometer_end: number | null; key: string }[]): Promise<number> {
+  if (!rows.length) return 0;
+  const res = await sql().query(
+    `WITH ins AS (INSERT INTO mileage_trips (driven_on, miles_tenths, purpose, odometer_start, odometer_end, import_key)
+       SELECT u.d, u.m, u.p, u.s, u.e, u.k FROM unnest($1::date[], $2::int[], $3::text[], $4::int[], $5::int[], $6::text[]) AS u(d, m, p, s, e, k)
+       ON CONFLICT (import_key) WHERE import_key IS NOT NULL DO NOTHING RETURNING id) SELECT count(*) AS n FROM ins`,
+    [rows.map((r) => r.driven_on), rows.map((r) => r.miles_tenths), rows.map((r) => r.purpose), rows.map((r) => r.odometer_start), rows.map((r) => r.odometer_end), rows.map((r) => r.key)]);
+  const n = Number((res as { n: string }[])[0].n);
+  await audit("import_trips", { added: n, skipped_existing: rows.length - n });
+  return n;
+}
+
+/**
+ * Supplies bought or on hand become purchase / opening movements (never expenses). Items are matched by name (any case) or created.
+ * A lot number may have only one expiry date per item; rows that break that are refused. Purchases only add stock, so stock can't go negative.
+ */
+export async function importInventoryRows(rows: { label: string; unit: string; category: string; moved_on: string; kind: "opening" | "purchase"; quantity: number; unit_cost_cents: number; lot_number: string | null; expires_on: string | null; key: string }[]): Promise<{ added: number; newItems: number; lotConflicts: number }> {
+  if (!rows.length) return { added: 0, newItems: 0, lotConflicts: 0 };
+  const items = new Map((await sql()`SELECT id, lower(label) AS l FROM inventory_items`).map((r) => [String(r.l), Number(r.id)]));
+  let newItems = 0;
+  for (const r of rows) {
+    if (items.has(r.label.toLowerCase())) continue;
+    const ins = await sql()`INSERT INTO inventory_items (label, category, unit) VALUES (${r.label}, ${r.category}, ${r.unit}) ON CONFLICT DO NOTHING RETURNING id`;
+    const id = ins.length ? Number(ins[0].id) : Number((await sql()`SELECT id FROM inventory_items WHERE lower(label) = lower(${r.label})`)[0].id);
+    items.set(r.label.toLowerCase(), id);
+    if (ins.length) { newItems++; await audit("add_item", { id, via: "import" }); }
+  }
+  const all = await listMovements();
+  const byItem = new Map<number, Movement[]>();
+  for (const m of all) (byItem.get(m.item_id) ?? byItem.set(m.item_id, []).get(m.item_id)!).push(m);
+  const ok: (typeof rows[number] & { item_id: number })[] = [];
+  let lotConflicts = 0;
+  for (const r of rows) {
+    const item_id = items.get(r.label.toLowerCase())!, moves = byItem.get(item_id) ?? [];
+    if (checkLotConsistency(moves, r)) { lotConflicts++; continue; }
+    moves.push({ id: 0, item_id, moved_on: r.moved_on, kind: r.kind, quantity: r.quantity, unit_cost_cents: r.unit_cost_cents, reason: null, lot_number: r.lot_number, expires_on: r.expires_on } as Movement);
+    byItem.set(item_id, moves);
+    ok.push({ ...r, item_id });
+  }
+  let added = 0;
+  if (ok.length) {
+    const res = await sql().query(
+      `WITH ins AS (INSERT INTO inventory_movements (item_id, moved_on, kind, quantity, unit_cost_cents, lot_number, expires_on, import_key)
+         SELECT u.i, u.d, u.k, u.q, u.c, u.l, u.e, u.x FROM unnest($1::bigint[], $2::date[], $3::text[], $4::int[], $5::int[], $6::text[], $7::date[], $8::text[]) AS u(i, d, k, q, c, l, e, x)
+         ON CONFLICT (import_key) WHERE import_key IS NOT NULL DO NOTHING RETURNING id) SELECT count(*) AS n FROM ins`,
+      [ok.map((r) => r.item_id), ok.map((r) => r.moved_on), ok.map((r) => r.kind), ok.map((r) => r.quantity), ok.map((r) => r.unit_cost_cents), ok.map((r) => r.lot_number), ok.map((r) => r.expires_on), ok.map((r) => r.key)]);
+    added = Number((res as { n: string }[])[0].n);
+  }
+  await audit("import_inventory", { added, new_items: newItems, lot_conflicts: lotConflicts });
+  return { added, newItems, lotConflicts };
+}
+
+/** Every inventory item name, lower case, to show which imported items already exist. */
+export async function inventoryItemNames(): Promise<Set<string>> {
+  return new Set((await sql()`SELECT lower(label) AS l FROM inventory_items`).map((r) => String(r.l)));
+}
+
+/** Active revenue accounts, for sorting Square services into Revenue by Service. */
+export async function revenueAccounts(): Promise<{ id: number; label: string }[]> {
+  const rows = await sql()`SELECT id, number, label FROM accounts WHERE type = 'revenue' AND active ORDER BY number`;
+  return rows.map((r) => ({ id: Number(r.id), label: `${r.number} ${r.label}` }));
+}
+
+/** Gives imported Square entries a revenue account, only where none was chosen yet. Money is not changed. */
+export async function assignServiceAccounts(assign: { external_id: string; account_id: number }[]): Promise<{ set: number; notImported: number }> {
+  if (!assign.length) return { set: 0, notImported: 0 };
+  const res = await sql().query(
+    `WITH u AS (SELECT * FROM unnest($1::text[], $2::bigint[]) AS u(x, a)),
+          m AS (SELECT e.id, u.a FROM u JOIN income_entries e ON e.source = 'square' AND e.external_id = u.x JOIN accounts a ON a.id = u.a AND a.type = 'revenue' AND a.active),
+          ins AS (INSERT INTO income_accounts (income_id, account_id) SELECT id, a FROM m ON CONFLICT (income_id) DO NOTHING RETURNING id)
+     SELECT (SELECT count(*) FROM ins) AS set, (SELECT count(*) FROM u) - (SELECT count(*) FROM m) AS missing`,
+    [assign.map((r) => r.external_id), assign.map((r) => r.account_id)]);
+  const r0 = (res as { set: string; missing: string }[])[0];
+  await audit("import_services", { set: Number(r0.set), not_imported: Number(r0.missing) });
+  return { set: Number(r0.set), notImported: Number(r0.missing) };
+}
+
 /** Deletes the expense and its photos together, in one statement. */
 export async function deleteExpense(id: number): Promise<boolean> {
   const rows = await sql()`WITH p AS (DELETE FROM expense_receipts WHERE expense_id = ${id}) DELETE FROM expenses WHERE id = ${id} RETURNING id, amount_cents, category`;
